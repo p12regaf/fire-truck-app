@@ -124,7 +124,7 @@ system:
   device_user: "cosigein"
   device_number: "001"
   log_level: "DEBUG"       # DEBUG, INFO, WARNING, ERROR, CRITICAL
-  start_with_gui: true   # Controla si la GUI se inicia por defecto
+  start_with_gui: false   # Controla si la GUI se inicia por defecto
 
   power_monitor:
     enabled: true
@@ -194,6 +194,136 @@ data_sources:
     log_period_sec: 1
 ```
 
+## Archivo: `.\scripts\check_update.sh`
+
+```text
+#!/bin/bash
+
+# -- Configuración --
+APP_DIR="/home/cosigein/fire-truck-app"
+LOG_FILE="/home/cosigein/logs/updater.log"
+UPDATE_FLAG="/tmp/update_pending"
+GIT_BRANCH="main"
+
+# -- Función de Logging --
+log() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" | sudo tee -a $LOG_FILE
+}
+
+log "Iniciando comprobación de actualizaciones vía Git..."
+
+# Navegar al directorio de la aplicación
+cd $APP_DIR || { log "ERROR: No se pudo acceder al directorio $APP_DIR"; exit 1; }
+
+# 1. Actualizar el conocimiento del estado remoto sin cambiar los archivos locales
+git remote update
+if [ $? -ne 0 ]; then
+    log "ERROR: 'git remote update' falló. ¿Hay conexión a internet y la deploy key es correcta?"
+    exit 1
+fi
+
+# 2. Comprobar el estado
+GIT_STATUS=$(git status -uno)
+
+if echo "$GIT_STATUS" | grep -q "Your branch is up to date"; then
+    log "La aplicación ya está actualizada. No se requiere ninguna acción."
+    # Limpiar bandera por si quedó de un intento fallido anterior
+    sudo rm -f $UPDATE_FLAG
+    exit 0
+fi
+
+if echo "$GIT_STATUS" | grep -q "Your branch is behind"; then
+    log "Nueva versión detectada en el repositorio. Preparando para actualizar en el próximo apagado."
+    # Crear el fichero bandera para señalar que la actualización está lista
+    sudo touch $UPDATE_FLAG
+    log "Actualización lista para ser instalada."
+    exit 0
+fi
+
+log "Estado de Git no reconocido. No se toma ninguna acción."
+log "$GIT_STATUS"
+exit 0
+```
+
+## Archivo: `.\scripts\install_update.sh`
+
+```text
+#!/bin/bash
+
+# -- Configuración --
+APP_DIR="/home/cosigein/fire-truck-app"
+APP_SERVICE="app.service"
+UPDATE_FLAG="/tmp/update_pending"
+BACKUP_DIR="/home/cosigein/fire-truck-app-backup"
+LOG_FILE="/home/cosigein/logs/updater.log"
+
+# -- Función de Logging --
+log() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - [INSTALLER] - $1" | sudo tee -a $LOG_FILE
+}
+
+log "Iniciando script de instalación de actualización."
+
+if [ ! -f "$UPDATE_FLAG" ]; then
+    log "No hay bandera de actualización. No hay nada que hacer."
+    exit 0
+fi
+
+# 1. Parar el servicio
+log "Asegurando que el servicio $APP_SERVICE está detenido."
+sudo systemctl stop $APP_SERVICE
+
+# 2. Crear backup (opcional pero recomendado)
+log "Creando backup de la aplicación actual en $BACKUP_DIR..."
+sudo rm -rf $BACKUP_DIR
+sudo cp -r $APP_DIR $BACKUP_DIR
+
+# 3. Ejecutar git pull para actualizar
+log "Ejecutando 'git pull' para descargar los cambios..."
+cd $APP_DIR
+# Importante: Ejecutamos el comando como el usuario 'cosigein'
+sudo -u cosigein git pull
+if [ $? -ne 0 ]; then
+    log "ERROR: 'git pull' falló. Revirtiendo desde el backup."
+    sudo rm -rf $APP_DIR
+    sudo mv $BACKUP_DIR $APP_DIR
+    # No borramos la bandera. Se reintentará en el próximo apagado.
+    exit 1
+fi
+
+# 4. Crear venv si no existe y luego instalar dependencias
+VENV_DIR="$APP_DIR/.venv"
+if [ ! -d "$VENV_DIR" ]; then
+    log "El directorio venv no existe. Creándolo ahora..."
+    # Creamos el venv como el usuario 'cosigein'
+    sudo -u cosigein python3 -m venv $VENV_DIR
+fi
+
+if [ -f "$APP_DIR/requirements.txt" ]; then
+    log "Instalando/actualizando dependencias en el venv..."
+    sudo $VENV_DIR/bin/pip install -r "$APP_DIR/requirements.txt"
+fi
+
+# 5. Mover y recargar el servicio systemd si ha cambiado
+if [ -f "$APP_DIR/services/$APP_SERVICE" ]; then
+    # Comprobar si el archivo de servicio ha cambiado realmente
+    if ! cmp -s "$APP_DIR/services/$APP_SERVICE" "/etc/systemd/system/$APP_SERVICE"; then
+        log "El archivo de servicio ha cambiado. Actualizando..."
+        sudo cp "$APP_DIR/services/$APP_SERVICE" "/etc/systemd/system/$APP_SERVICE"
+        sudo systemctl daemon-reload
+    else
+        log "El archivo de servicio no ha cambiado."
+    fi
+fi
+
+# 6. Limpieza
+log "Limpiando archivos temporales..."
+sudo rm -f $UPDATE_FLAG
+
+log "¡Actualización completada con éxito! El sistema procederá con el apagado/reinicio."
+exit 0
+```
+
 ## Archivo: `.\services\app.service`
 
 ```ini
@@ -206,9 +336,27 @@ User=cosigein
 Group=cosigein
 WorkingDirectory=/home/cosigein/fire-truck-app
 # Inicia el servicio en modo "headless". Para la GUI, ejecutar manualmente.
-ExecStart=/usr/bin/python3 /home/cosigein/fire-truck-app/main.py
+ExecStart=/home/cosigein/fire-truck-app/.venv/bin/python3 /home/cosigein/fire-truck-app/main.py
 Restart=on-failure
 RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target
+```
+
+## Archivo: `.\services\updater.service`
+
+```ini
+[Unit]
+Description=Comprobador de actualizaciones para fire-truck-app
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=cosigein
+Group=cosigein
+ExecStart=/home/cosigein/fire-truck-app/scripts/check_update.sh
 
 [Install]
 WantedBy=multi-user.target
@@ -228,6 +376,7 @@ import subprocess
 import threading
 import time
 import RPi.GPIO as GPIO
+import os
 
 log = logging.getLogger(__name__)
 
@@ -302,14 +451,44 @@ class AlarmMonitor(threading.Thread):
     def _cleanup(self):
         log.debug("AlarmMonitor: limpieza finalizada.")
 
+    def _perform_update_if_pending(self):
+        """
+        Comprueba si hay una actualización pendiente y ejecuta el script de instalación.
+        """
+        update_flag_path = "/tmp/update_pending"
+        install_script_path = "/home/cosigein/fire-truck-app/scripts/install_update.sh"
+        
+        if os.path.exists(update_flag_path):
+            log.critical("ACTUALIZACIÓN PENDIENTE DETECTADA. Ejecutando script de instalación antes de apagar.")
+            try:
+                # Damos un timeout generoso, pero el apagado no esperará indefinidamente
+                result = subprocess.run(
+                    [install_script_path],
+                    capture_output=True,
+                    text=True,
+                    timeout=300 # 5 minutos de timeout
+                )
+                log.info(f"Script de instalación finalizado con código de salida: {result.returncode}")
+                log.info(f"Salida del script:\n{result.stdout}")
+                if result.stderr:
+                    log.error(f"Errores del script de instalación:\n{result.stderr}")
+            except subprocess.TimeoutExpired:
+                log.critical("El script de instalación tardó demasiado (timeout). Forzando apagado.")
+            except Exception as e:
+                log.critical(f"Fallo al ejecutar el script de instalación: {e}")
+
+    # Modifica el método de apagado/reinicio del sistema
     def _shutdown_system(self):
-        log.critical("APAGANDO EL SISTEMA OPERATIVO AHORA (disparado por alarma).")
+        log.info("Comprobando si hay actualizaciones pendientes antes del apagado final.")
+        self._perform_update_if_pending()
+
+        log.critical("APAGANDO EL SISTEMA OPERATIVO AHORA.")
         try:
-            # TODO: Descomentar la siguiente línea para producción
-            # subprocess.call(['sudo', 'shutdown', 'now'])
+            # Descomenta para producción
+            subprocess.call(['sudo', 'shutdown', 'now'])
             
             # Línea para pruebas
-            print("SIMULACIÓN: sudo shutdown now")
+            # print("SIMULACIÓN: sudo shutdown now")
             log.info("Comando de apagado del sistema ejecutado.")
         except Exception as e:
             log.critical(f"Fallo al ejecutar el comando de apagado del sistema: {e}")
@@ -551,7 +730,8 @@ import logging
 import subprocess
 import threading
 import time
-import RPi.GPIO as GPIO # <-- Importación directa y sin comprobaciones
+import RPi.GPIO as GPIO 
+import os
 
 log = logging.getLogger(__name__)
 
@@ -631,14 +811,44 @@ class PowerMonitor(threading.Thread):
     def _cleanup(self):
         log.debug("PowerMonitor: limpieza finalizada.")
 
+    def _perform_update_if_pending(self):
+        """
+        Comprueba si hay una actualización pendiente y ejecuta el script de instalación.
+        """
+        update_flag_path = "/tmp/update_pending"
+        install_script_path = "/home/cosigein/fire-truck-app/scripts/install_update.sh"
+        
+        if os.path.exists(update_flag_path):
+            log.critical("ACTUALIZACIÓN PENDIENTE DETECTADA. Ejecutando script de instalación antes de apagar.")
+            try:
+                # Damos un timeout generoso, pero el apagado no esperará indefinidamente
+                result = subprocess.run(
+                    [install_script_path],
+                    capture_output=True,
+                    text=True,
+                    timeout=300 # 5 minutos de timeout
+                )
+                log.info(f"Script de instalación finalizado con código de salida: {result.returncode}")
+                log.info(f"Salida del script:\n{result.stdout}")
+                if result.stderr:
+                    log.error(f"Errores del script de instalación:\n{result.stderr}")
+            except subprocess.TimeoutExpired:
+                log.critical("El script de instalación tardó demasiado (timeout). Forzando apagado.")
+            except Exception as e:
+                log.critical(f"Fallo al ejecutar el script de instalación: {e}")
+
+    # Modifica el método de apagado/reinicio del sistema
     def _shutdown_system(self):
+        log.info("Comprobando si hay actualizaciones pendientes antes del apagado final.")
+        self._perform_update_if_pending()
+
         log.critical("APAGANDO EL SISTEMA OPERATIVO AHORA.")
         try:
-            # TODO: Descomentar la siguiente línea para producción
-            # subprocess.call(['sudo', 'shutdown', 'now'])
+            # Descomenta para producción
+            subprocess.call(['sudo', 'shutdown', 'now'])
             
             # Línea para pruebas
-            print("SIMULACIÓN: sudo shutdown now")
+            # print("SIMULACIÓN: sudo shutdown now")
             log.info("Comando de apagado del sistema ejecutado.")
         except Exception as e:
             log.critical(f"Fallo al ejecutar el comando de apagado del sistema: {e}")
@@ -652,6 +862,7 @@ import subprocess
 import threading
 import time
 import RPi.GPIO as GPIO
+import os
 
 log = logging.getLogger(__name__)
 
@@ -729,14 +940,44 @@ class RebootMonitor(threading.Thread):
     def _cleanup(self):
         log.debug("RebootMonitor: limpieza finalizada.")
 
+    def _perform_update_if_pending(self):
+        """
+        Comprueba si hay una actualización pendiente y ejecuta el script de instalación.
+        """
+        update_flag_path = "/tmp/update_pending"
+        install_script_path = "/home/cosigein/fire-truck-app/scripts/install_update.sh"
+        
+        if os.path.exists(update_flag_path):
+            log.critical("ACTUALIZACIÓN PENDIENTE DETECTADA. Ejecutando script de instalación antes de apagar.")
+            try:
+                # Damos un timeout generoso, pero el apagado no esperará indefinidamente
+                result = subprocess.run(
+                    [install_script_path],
+                    capture_output=True,
+                    text=True,
+                    timeout=300 # 5 minutos de timeout
+                )
+                log.info(f"Script de instalación finalizado con código de salida: {result.returncode}")
+                log.info(f"Salida del script:\n{result.stdout}")
+                if result.stderr:
+                    log.error(f"Errores del script de instalación:\n{result.stderr}")
+            except subprocess.TimeoutExpired:
+                log.critical("El script de instalación tardó demasiado (timeout). Forzando apagado.")
+            except Exception as e:
+                log.critical(f"Fallo al ejecutar el script de instalación: {e}")
+
+    # Modifica el método de apagado/reinicio del sistema
     def _reboot_system(self):
+        log.info("Comprobando si hay actualizaciones pendientes antes del reinicio final.")
+        self._perform_update_if_pending()
+
         log.critical("REINICIANDO EL SISTEMA OPERATIVO AHORA.")
         try:
-            # TODO: Descomentar la siguiente línea para producción
-            # subprocess.call(['sudo', 'reboot'])
-            
+            # Descomenta para producción
+            subprocess.call(['sudo', 'reboot'])
+
             # Línea para pruebas
-            print("SIMULACIÓN: sudo reboot")
+            # print("SIMULACIÓN: sudo reboot")
             log.info("Comando de reinicio del sistema ejecutado.")
         except Exception as e:
             log.critical(f"Fallo al ejecutar el comando de reinicio del sistema: {e}")

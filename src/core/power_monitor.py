@@ -83,37 +83,8 @@ class PowerMonitor(threading.Thread):
     def _cleanup(self):
         log.debug("PowerMonitor: limpieza finalizada.")
 
-    def _perform_update_if_pending(self):
-        """
-        Comprueba si hay una actualización pendiente y ejecuta el script de instalación.
-        """
-        update_flag_path = "/tmp/update_pending"
-        install_script_path = "/home/cosigein/fire-truck-app/scripts/install_update.sh"
-        
-        if os.path.exists(update_flag_path):
-            log.critical("ACTUALIZACIÓN PENDIENTE DETECTADA. Ejecutando script de instalación antes de apagar.")
-            try:
-                # Damos un timeout generoso, pero el apagado no esperará indefinidamente
-                result = subprocess.run(
-                    [install_script_path],
-                    capture_output=True,
-                    text=True,
-                    timeout=300 # 5 minutos de timeout
-                )
-                log.info(f"Script de instalación finalizado con código de salida: {result.returncode}")
-                log.info(f"Salida del script:\n{result.stdout}")
-                if result.stderr:
-                    log.error(f"Errores del script de instalación:\n{result.stderr}")
-            except subprocess.TimeoutExpired:
-                log.critical("El script de instalación tardó demasiado (timeout). Forzando apagado.")
-            except Exception as e:
-                log.critical(f"Fallo al ejecutar el script de instalación: {e}")
-
     # Modifica el método de apagado/reinicio del sistema
     def _shutdown_system(self):
-        log.info("Comprobando si hay actualizaciones pendientes antes del apagado final.")
-        self._perform_update_if_pending()
-
         log.critical("APAGANDO EL SISTEMA OPERATIVO AHORA.")
         try:
             # Descomenta para producción

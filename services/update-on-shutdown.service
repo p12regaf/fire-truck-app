@@ -1,0 +1,18 @@
+[Unit]
+Description=Install pending application update on shutdown
+# Este servicio NO debe tener dependencias por defecto
+DefaultDependencies=no
+# Debe ejecutarse ANTES del apagado final, pero DESPUÉS de que la red y tu app se detengan
+After=app.service network.target
+Before=shutdown.target reboot.target halt.target
+
+[Service]
+Type=oneshot
+# Ejecuta el script de instalación. El script ya comprueba si hay algo que hacer.
+ExecStart=/home/cosigein/fire-truck-app/scripts/install_update.sh
+# Es importante que el servicio no falle si el script no hace nada
+RemainAfterExit=yes
+
+[Install]
+# Este servicio se activa cuando el sistema entra en el objetivo de apagado
+WantedBy=shutdown.target
