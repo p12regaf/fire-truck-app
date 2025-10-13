@@ -20,8 +20,8 @@ if [ ! -f "$UPDATE_FLAG" ]; then
 fi
 
 # 1. Parar el servicio
-log "Asegurando que el servicio $APP_SERVICE está detenido."
-sudo systemctl stop $APP_SERVICE
+# log "Asegurando que el servicio $APP_SERVICE está detenido."
+# sudo systemctl stop $APP_SERVICE
 
 # 2. Crear backup (opcional pero recomendado)
 log "Creando backup de la aplicación actual en $BACKUP_DIR..."
