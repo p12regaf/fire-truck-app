@@ -102,6 +102,9 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+# prueba de actualizacion IIIIIIIIII
+# prueba de actualizacion --- IGNORE ---
 ```
 
 ## Archivo: `.\requirements.txt`
@@ -124,7 +127,7 @@ system:
   device_user: "cosigein"
   device_number: "001"
   log_level: "DEBUG"       # DEBUG, INFO, WARNING, ERROR, CRITICAL
-  start_with_gui: false   # Controla si la GUI se inicia por defecto
+  start_with_gui: false 
 
   power_monitor:
     enabled: true
@@ -182,7 +185,7 @@ data_sources:
     i2c_addr: 0x42
     inactivity_timeout_sec: 600
 
-  estabilometro: # IMU que envía datos por UART
+  estabilometro:
     enabled: true
     serial_port: "/dev/serial0"
     baud_rate: 115200
@@ -270,8 +273,8 @@ if [ ! -f "$UPDATE_FLAG" ]; then
 fi
 
 # 1. Parar el servicio
-log "Asegurando que el servicio $APP_SERVICE está detenido."
-sudo systemctl stop $APP_SERVICE
+# log "Asegurando que el servicio $APP_SERVICE está detenido."
+# sudo systemctl stop $APP_SERVICE
 
 # 2. Crear backup (opcional pero recomendado)
 log "Creando backup de la aplicación actual en $BACKUP_DIR..."
@@ -342,6 +345,29 @@ RestartSec=5s
 
 [Install]
 WantedBy=multi-user.target
+```
+
+## Archivo: `.\services\update-on-shutdown.service`
+
+```ini
+[Unit]
+Description=Install pending application update on shutdown
+# Este servicio NO debe tener dependencias por defecto
+DefaultDependencies=no
+# Debe ejecutarse ANTES del apagado final, pero DESPUÉS de que la red y tu app se detengan
+After=app.service network.target
+Before=shutdown.target reboot.target halt.target
+
+[Service]
+Type=oneshot
+# Ejecuta el script de instalación. El script ya comprueba si hay algo que hacer.
+ExecStart=/home/cosigein/fire-truck-app/scripts/install_update.sh
+# Es importante que el servicio no falle si el script no hace nada
+RemainAfterExit=yes
+
+[Install]
+# Este servicio se activa cuando el sistema entra en el objetivo de apagado
+WantedBy=shutdown.target
 ```
 
 ## Archivo: `.\services\updater.service`
@@ -451,37 +477,8 @@ class AlarmMonitor(threading.Thread):
     def _cleanup(self):
         log.debug("AlarmMonitor: limpieza finalizada.")
 
-    def _perform_update_if_pending(self):
-        """
-        Comprueba si hay una actualización pendiente y ejecuta el script de instalación.
-        """
-        update_flag_path = "/tmp/update_pending"
-        install_script_path = "/home/cosigein/fire-truck-app/scripts/install_update.sh"
-        
-        if os.path.exists(update_flag_path):
-            log.critical("ACTUALIZACIÓN PENDIENTE DETECTADA. Ejecutando script de instalación antes de apagar.")
-            try:
-                # Damos un timeout generoso, pero el apagado no esperará indefinidamente
-                result = subprocess.run(
-                    [install_script_path],
-                    capture_output=True,
-                    text=True,
-                    timeout=300 # 5 minutos de timeout
-                )
-                log.info(f"Script de instalación finalizado con código de salida: {result.returncode}")
-                log.info(f"Salida del script:\n{result.stdout}")
-                if result.stderr:
-                    log.error(f"Errores del script de instalación:\n{result.stderr}")
-            except subprocess.TimeoutExpired:
-                log.critical("El script de instalación tardó demasiado (timeout). Forzando apagado.")
-            except Exception as e:
-                log.critical(f"Fallo al ejecutar el script de instalación: {e}")
-
     # Modifica el método de apagado/reinicio del sistema
     def _shutdown_system(self):
-        log.info("Comprobando si hay actualizaciones pendientes antes del apagado final.")
-        self._perform_update_if_pending()
-
         log.critical("APAGANDO EL SISTEMA OPERATIVO AHORA.")
         try:
             # Descomenta para producción
@@ -811,37 +808,8 @@ class PowerMonitor(threading.Thread):
     def _cleanup(self):
         log.debug("PowerMonitor: limpieza finalizada.")
 
-    def _perform_update_if_pending(self):
-        """
-        Comprueba si hay una actualización pendiente y ejecuta el script de instalación.
-        """
-        update_flag_path = "/tmp/update_pending"
-        install_script_path = "/home/cosigein/fire-truck-app/scripts/install_update.sh"
-        
-        if os.path.exists(update_flag_path):
-            log.critical("ACTUALIZACIÓN PENDIENTE DETECTADA. Ejecutando script de instalación antes de apagar.")
-            try:
-                # Damos un timeout generoso, pero el apagado no esperará indefinidamente
-                result = subprocess.run(
-                    [install_script_path],
-                    capture_output=True,
-                    text=True,
-                    timeout=300 # 5 minutos de timeout
-                )
-                log.info(f"Script de instalación finalizado con código de salida: {result.returncode}")
-                log.info(f"Salida del script:\n{result.stdout}")
-                if result.stderr:
-                    log.error(f"Errores del script de instalación:\n{result.stderr}")
-            except subprocess.TimeoutExpired:
-                log.critical("El script de instalación tardó demasiado (timeout). Forzando apagado.")
-            except Exception as e:
-                log.critical(f"Fallo al ejecutar el script de instalación: {e}")
-
     # Modifica el método de apagado/reinicio del sistema
     def _shutdown_system(self):
-        log.info("Comprobando si hay actualizaciones pendientes antes del apagado final.")
-        self._perform_update_if_pending()
-
         log.critical("APAGANDO EL SISTEMA OPERATIVO AHORA.")
         try:
             # Descomenta para producción
@@ -940,37 +908,8 @@ class RebootMonitor(threading.Thread):
     def _cleanup(self):
         log.debug("RebootMonitor: limpieza finalizada.")
 
-    def _perform_update_if_pending(self):
-        """
-        Comprueba si hay una actualización pendiente y ejecuta el script de instalación.
-        """
-        update_flag_path = "/tmp/update_pending"
-        install_script_path = "/home/cosigein/fire-truck-app/scripts/install_update.sh"
-        
-        if os.path.exists(update_flag_path):
-            log.critical("ACTUALIZACIÓN PENDIENTE DETECTADA. Ejecutando script de instalación antes de apagar.")
-            try:
-                # Damos un timeout generoso, pero el apagado no esperará indefinidamente
-                result = subprocess.run(
-                    [install_script_path],
-                    capture_output=True,
-                    text=True,
-                    timeout=300 # 5 minutos de timeout
-                )
-                log.info(f"Script de instalación finalizado con código de salida: {result.returncode}")
-                log.info(f"Salida del script:\n{result.stdout}")
-                if result.stderr:
-                    log.error(f"Errores del script de instalación:\n{result.stderr}")
-            except subprocess.TimeoutExpired:
-                log.critical("El script de instalación tardó demasiado (timeout). Forzando apagado.")
-            except Exception as e:
-                log.critical(f"Fallo al ejecutar el script de instalación: {e}")
-
     # Modifica el método de apagado/reinicio del sistema
     def _reboot_system(self):
-        log.info("Comprobando si hay actualizaciones pendientes antes del reinicio final.")
-        self._perform_update_if_pending()
-
         log.critical("REINICIANDO EL SISTEMA OPERATIVO AHORA.")
         try:
             # Descomenta para producción
