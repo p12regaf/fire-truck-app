@@ -5,7 +5,7 @@ import sys
 import time
 from queue import Queue
 
-# prueba de actualizacion
+# prueba de actualizacion II
 
 from src.core.app_controller import AppController
 from src.utils.config_loader import ConfigLoader
