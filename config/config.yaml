@@ -5,7 +5,7 @@ system:
   device_user: "cosigein"
   device_number: "001"
   log_level: "DEBUG"       # DEBUG, INFO, WARNING, ERROR, CRITICAL
-  start_with_gui: false   # Controla si la GUI se inicia por defecto
+  start_with_gui: false 
 
   power_monitor:
     enabled: true
@@ -63,7 +63,7 @@ data_sources:
     i2c_addr: 0x42
     inactivity_timeout_sec: 600
 
-  estabilometro: # IMU que envía datos por UART
+  estabilometro:
     enabled: true
     serial_port: "/dev/serial0"
     baud_rate: 115200
