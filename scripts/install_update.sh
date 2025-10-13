@@ -41,10 +41,17 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-# 4. Instalar/actualizar dependencias de Python en el venv
+# 4. Crear venv si no existe y luego instalar dependencias
+VENV_DIR="$APP_DIR/venv"
+if [ ! -d "$VENV_DIR" ]; then
+    log "El directorio venv no existe. Creándolo ahora..."
+    # Creamos el venv como el usuario 'cosigein'
+    sudo -u cosigein python3 -m venv $VENV_DIR
+fi
+
 if [ -f "$APP_DIR/requirements.txt" ]; then
     log "Instalando/actualizando dependencias en el venv..."
-    sudo $APP_DIR/venv/bin/pip install -r "$APP_DIR/requirements.txt"
+    sudo $VENV_DIR/bin/pip install -r "$APP_DIR/requirements.txt"
 fi
 
 # 5. Mover y recargar el servicio systemd si ha cambiado
