@@ -102,3 +102,4 @@ if __name__ == "__main__":
 
 # prueba de actualizacion IIIIIIIIII
 # prueba de actualizacion --- IGNORE ---
+# ESTE ES EL COMMIT DE PRUEBA PARA DIAGNOSTICO
