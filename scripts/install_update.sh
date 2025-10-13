@@ -42,7 +42,7 @@ if [ $? -ne 0 ]; then
 fi
 
 # 4. Crear venv si no existe y luego instalar dependencias
-VENV_DIR="$APP_DIR/venv"
+VENV_DIR="$APP_DIR/.venv"
 if [ ! -d "$VENV_DIR" ]; then
     log "El directorio venv no existe. Creándolo ahora..."
     # Creamos el venv como el usuario 'cosigein'
