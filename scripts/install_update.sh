@@ -4,70 +4,64 @@
 APP_DIR="/home/cosigein/fire-truck-app"
 APP_SERVICE="app.service"
 UPDATE_FLAG="/tmp/update_pending"
-DOWNLOAD_PATH="/tmp/update.tar.gz"
 BACKUP_DIR="/home/cosigein/fire-truck-app-backup"
 LOG_FILE="/home/cosigein/logs/updater.log"
 
 # -- Función de Logging --
 log() {
-    echo "$(date '+%Y-%m-%d %H:%M:%S') - [INSTALLER] - $1" | tee -a $LOG_FILE
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - [INSTALLER] - $1" | sudo tee -a $LOG_FILE
 }
 
 log "Iniciando script de instalación de actualización."
 
-# 1. Verificar si la actualización es realmente necesaria
 if [ ! -f "$UPDATE_FLAG" ]; then
     log "No hay bandera de actualización. No hay nada que hacer."
     exit 0
 fi
 
-if [ ! -f "$DOWNLOAD_PATH" ]; then
-    log "ERROR: La bandera de actualización existe, pero el archivo descargado no se encuentra en $DOWNLOAD_PATH. Abortando."
-    rm -f $UPDATE_FLAG
+# 1. Parar el servicio
+log "Asegurando que el servicio $APP_SERVICE está detenido."
+sudo systemctl stop $APP_SERVICE
+
+# 2. Crear backup (opcional pero recomendado)
+log "Creando backup de la aplicación actual en $BACKUP_DIR..."
+sudo rm -rf $BACKUP_DIR
+sudo cp -r $APP_DIR $BACKUP_DIR
+
+# 3. Ejecutar git pull para actualizar
+log "Ejecutando 'git pull' para descargar los cambios..."
+cd $APP_DIR
+# Importante: Ejecutamos el comando como el usuario 'cosigein'
+sudo -u cosigein git pull
+if [ $? -ne 0 ]; then
+    log "ERROR: 'git pull' falló. Revirtiendo desde el backup."
+    sudo rm -rf $APP_DIR
+    sudo mv $BACKUP_DIR $APP_DIR
+    # No borramos la bandera. Se reintentará en el próximo apagado.
     exit 1
 fi
 
-# 2. Parar el servicio por si acaso (aunque ya debería estar en proceso de parada)
-log "Asegurando que el servicio app.service está detenido."
-sudo systemctl stop $APP_SERVICE
-
-# 3. Crear un backup de la versión actual
-log "Creando backup de la aplicación actual en $BACKUP_DIR..."
-rm -rf $BACKUP_DIR # Elimina backup antiguo
-mv $APP_DIR $BACKUP_DIR
-
-# 4. Descomprimir la nueva versión
-log "Descomprimiendo la nueva versión en $APP_DIR..."
-mkdir -p $APP_DIR
-tar -xzf $DOWNLOAD_PATH -C $APP_DIR --strip-components=1 # --strip-components=1 es útil si tu .tar.gz tiene una carpeta raíz
-
-# 5. Restaurar configuración si es necesario (MUY IMPORTANTE)
-# Esto evita que cada actualización sobreescriba una configuración personalizada.
-if [ -f "$BACKUP_DIR/config/config.yaml" ]; then
-    log "Restaurando config.yaml del backup."
-    cp "$BACKUP_DIR/config/config.yaml" "$APP_DIR/config/config.yaml"
-fi
-
-# 6. Mover el nuevo archivo de servicio
-if [ -f "$APP_DIR/services/$APP_SERVICE" ]; then
-    log "Moviendo el nuevo archivo de servicio a /etc/systemd/system/..."
-    sudo cp "$APP_DIR/services/$APP_SERVICE" "/etc/systemd/system/$APP_SERVICE"
-    sudo systemctl daemon-reload
-else
-    log "ADVERTENCIA: No se encontró un nuevo archivo .service en el paquete de actualización."
-fi
-
-# 7. Instalar/actualizar dependencias de Python
+# 4. Instalar/actualizar dependencias de Python en el venv
 if [ -f "$APP_DIR/requirements.txt" ]; then
-    log "Instalando/actualizando dependencias desde requirements.txt..."
-    # Es importante usar el python3 correcto y quizás un entorno virtual si lo usas
-    python3 -m pip install -r "$APP_DIR/requirements.txt"
+    log "Instalando/actualizando dependencias en el venv..."
+    sudo $APP_DIR/venv/bin/pip install -r "$APP_DIR/requirements.txt"
 fi
 
-# 8. Limpieza
-log "Limpiando archivos temporales..."
-rm -f $DOWNLOAD_PATH
-rm -f $UPDATE_FLAG
+# 5. Mover y recargar el servicio systemd si ha cambiado
+if [ -f "$APP_DIR/services/$APP_SERVICE" ]; then
+    # Comprobar si el archivo de servicio ha cambiado realmente
+    if ! cmp -s "$APP_DIR/services/$APP_SERVICE" "/etc/systemd/system/$APP_SERVICE"; then
+        log "El archivo de servicio ha cambiado. Actualizando..."
+        sudo cp "$APP_DIR/services/$APP_SERVICE" "/etc/systemd/system/$APP_SERVICE"
+        sudo systemctl daemon-reload
+    else
+        log "El archivo de servicio no ha cambiado."
+    fi
+fi
 
-log "¡Actualización completada con éxito! El sistema se apagará ahora."
+# 6. Limpieza
+log "Limpiando archivos temporales..."
+sudo rm -f $UPDATE_FLAG
+
+log "¡Actualización completada con éxito! El sistema procederá con el apagado/reinicio."
 exit 0
