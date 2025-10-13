@@ -1,0 +1,13 @@
+[Unit]
+Description=Comprobador de actualizaciones para fire-truck-app
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=cosigein
+Group=cosigein
+ExecStart=/home/cosigein/fire-truck-app/scripts/check_update.sh
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,75 @@
+# -----------------------------------------------------------------
+# Configuración Unificada para la Aplicación fire-truck-app
+# -----------------------------------------------------------------
+system:
+  device_user: "cosigein"
+  device_number: "001"
+  log_level: "DEBUG"       # DEBUG, INFO, WARNING, ERROR, CRITICAL
+  start_with_gui: true   # Controla si la GUI se inicia por defecto
+
+  power_monitor:
+    enabled: true
+    # Pin GPIO (en modo BCM) conectado a la alimentación del vehículo.
+    # El pin 36 (BOARD) es el 16 (BCM).
+    pin: 16 
+    # Cómo está conectado el pin. PULL_UP significa que el pin está en ALTO (HIGH)
+    # cuando el motor está encendido, y va a BAJO (LOW) cuando se apaga.
+    pull_up_down: "PUD_UP" 
+  
+  alarm_monitor:
+    enabled: true
+    # Pin GPIO (BCM) para la alarma de la fuente de alimentación. Pin 37 (BOARD) -> 26 (BCM).
+    pin: 26
+    # La alarma se activa (TRUE) cuando el pin pasa a estado HIGH.
+    pull_up_down: "PUD_DOWN"
+  
+  reboot_monitor:
+    enabled: true
+    # Pin GPIO (BCM) para la señal de reinicio de la fuente. Pin 32 (BOARD) -> 12 (BCM).
+    pin: 12
+    # La señal de reinicio se activa (FALSE) cuando el pin pasa a estado LOW.
+    # Esto implica que el pin debe estar mantenido en HIGH por un circuito externo.
+    pull_up_down: "PUD_UP"
+
+paths:
+  data_root: "/home/cosigein/datos"
+  app_logs: "/home/cosigein/logs"
+  # Un único archivo para gestionar todos los contadores de sesión.
+  session_db: "/home/cosigein/fire-truck-app_session_data.json"
+
+ftp:
+  enabled: true
+  host: "31.97.54.148"
+  port: 21
+  user: "doback"
+  pass: "cosigein2025?"
+  # Intervalo para buscar y subir archivos de log completos.
+  upload_interval_sec: 300
+  # Intervalo para subir los archivos de estado en tiempo real.
+  realtime_interval_sec: 30
+  # Los archivos no se subirán si se han modificado en los últimos X segundos.
+  upload_safety_margin_sec: 120
+
+data_sources:
+  can:
+    enabled: true
+    interface: "can0"
+    bitrate: 500000
+    inactivity_timeout_sec: 10
+
+  gps:
+    enabled: true
+    i2c_bus: 1
+    i2c_addr: 0x42
+    inactivity_timeout_sec: 600
+
+  estabilometro: # IMU que envía datos por UART
+    enabled: true
+    serial_port: "/dev/serial0"
+    baud_rate: 115200
+    session_timeout_sec: 15
+
+  gpio_rotativo:
+    enabled: true
+    pin: 22
+    log_period_sec: 1

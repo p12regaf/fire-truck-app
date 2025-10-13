@@ -1,0 +1,5 @@
+PyYAML
+python-can
+pyserial
+RPi.GPIO
+smbus2

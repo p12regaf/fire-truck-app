@@ -1,0 +1,15 @@
+[Unit]
+Description=Servicio de Monitorización de Vehículos (fire-truck-app)
+After=network.target
+
+[Service]
+User=cosigein
+Group=cosigein
+WorkingDirectory=/home/cosigein/fire-truck-app
+# Inicia el servicio en modo "headless". Para la GUI, ejecutar manualmente.
+ExecStart=/home/cosigein/fire-truck-app/.venv/bin/python3 /home/cosigein/fire-truck-app/main.py
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target
