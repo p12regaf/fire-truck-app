@@ -100,6 +100,6 @@ def main():
 if __name__ == "__main__":
     main()
 
+# ESTE ES EL COMMIT DE PRUEBA PARA DIAGNOSTICO
 # prueba de actualizacion IIIIIIIIII
 # prueba de actualizacion --- IGNORE ---
-# ESTE ES EL COMMIT DE PRUEBA PARA DIAGNOSTICO
