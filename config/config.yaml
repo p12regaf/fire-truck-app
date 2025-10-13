@@ -5,7 +5,7 @@ system:
   device_user: "cosigein"
   device_number: "001"
   log_level: "DEBUG"       # DEBUG, INFO, WARNING, ERROR, CRITICAL
-  start_with_gui: true   # Controla si la GUI se inicia por defecto
+  start_with_gui: false   # Controla si la GUI se inicia por defecto
 
   power_monitor:
     enabled: true
