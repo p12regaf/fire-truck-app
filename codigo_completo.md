@@ -103,8 +103,6 @@ def main():
 if __name__ == "__main__":
     main()
 
-# prueba de actualizacion IIIIIIIIII
-# prueba de actualizacion --- IGNORE ---
 ```
 
 ## Archivo: `.\requirements.txt`
@@ -197,134 +195,62 @@ data_sources:
     log_period_sec: 1
 ```
 
-## Archivo: `.\scripts\check_update.sh`
+## Archivo: `.\scripts\check_and_install_update.sh`
 
 ```text
 #!/bin/bash
 
-# -- Configuración --
 APP_DIR="/home/cosigein/fire-truck-app"
 LOG_FILE="/home/cosigein/logs/updater.log"
-UPDATE_FLAG="/tmp/update_pending"
-GIT_BRANCH="main"
+APP_SERVICE="app.service"
 
-# -- Función de Logging --
 log() {
-    echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" | sudo tee -a $LOG_FILE
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - [UPDATER] - $1" | tee -a $LOG_FILE
 }
 
-log "Iniciando comprobación de actualizaciones vía Git..."
+log "--- Iniciando script de comprobación e instalación ---"
 
 # Navegar al directorio de la aplicación
-cd $APP_DIR || { log "ERROR: No se pudo acceder al directorio $APP_DIR"; exit 1; }
+cd $APP_DIR || { log "ERROR: No se pudo acceder a $APP_DIR"; exit 1; }
 
-# 1. Actualizar el conocimiento del estado remoto sin cambiar los archivos locales
-git remote update
-if [ $? -ne 0 ]; then
-    log "ERROR: 'git remote update' falló. ¿Hay conexión a internet y la deploy key es correcta?"
-    exit 1
-fi
-
-# 2. Comprobar el estado
-GIT_STATUS=$(git status -uno)
-
-if echo "$GIT_STATUS" | grep -q "Your branch is up to date"; then
-    log "La aplicación ya está actualizada. No se requiere ninguna acción."
-    # Limpiar bandera por si quedó de un intento fallido anterior
-    sudo rm -f $UPDATE_FLAG
+# Comprobar conectividad
+if ! ping -c 1 -W 5 8.8.8.8 &> /dev/null; then
+    log "No hay conexión a internet. Saliendo."
     exit 0
 fi
+log "Conexión a internet detectada."
 
-if echo "$GIT_STATUS" | grep -q "Your branch is behind"; then
-    log "Nueva versión detectada en el repositorio. Preparando para actualizar en el próximo apagado."
-    # Crear el fichero bandera para señalar que la actualización está lista
-    sudo touch $UPDATE_FLAG
-    log "Actualización lista para ser instalada."
-    exit 0
-fi
+# Comprobar estado de Git como el usuario correcto
+log "Ejecutando comprobaciones de Git como usuario 'cosigein'..."
+GIT_OUTPUT=$(sudo -u cosigein git remote update 2>&1 && sudo -u cosigein git status -uno 2>&1)
 
-log "Estado de Git no reconocido. No se toma ninguna acción."
-log "$GIT_STATUS"
-exit 0
-```
+if [[ $GIT_OUTPUT == *"Your branch is behind"* ]]; then
+    log "¡Nueva versión detectada! Iniciando proceso de actualización."
 
-## Archivo: `.\scripts\install_update.sh`
+    log "Deteniendo el servicio $APP_SERVICE..."
+    systemctl stop $APP_SERVICE
 
-```text
-#!/bin/bash
-
-# -- Configuración --
-APP_DIR="/home/cosigein/fire-truck-app"
-APP_SERVICE="app.service"
-UPDATE_FLAG="/tmp/update_pending"
-BACKUP_DIR="/home/cosigein/fire-truck-app-backup"
-LOG_FILE="/home/cosigein/logs/updater.log"
-
-# -- Función de Logging --
-log() {
-    echo "$(date '+%Y-%m-%d %H:%M:%S') - [INSTALLER] - $1" | sudo tee -a $LOG_FILE
-}
-
-log "Iniciando script de instalación de actualización."
-
-if [ ! -f "$UPDATE_FLAG" ]; then
-    log "No hay bandera de actualización. No hay nada que hacer."
-    exit 0
-fi
-
-# 1. Parar el servicio
-# log "Asegurando que el servicio $APP_SERVICE está detenido."
-# sudo systemctl stop $APP_SERVICE
-
-# 2. Crear backup (opcional pero recomendado)
-log "Creando backup de la aplicación actual en $BACKUP_DIR..."
-sudo rm -rf $BACKUP_DIR
-sudo cp -r $APP_DIR $BACKUP_DIR
-
-# 3. Ejecutar git pull para actualizar
-log "Ejecutando 'git pull' para descargar los cambios..."
-cd $APP_DIR
-# Importante: Ejecutamos el comando como el usuario 'cosigein'
-sudo -u cosigein git pull
-if [ $? -ne 0 ]; then
-    log "ERROR: 'git pull' falló. Revirtiendo desde el backup."
-    sudo rm -rf $APP_DIR
-    sudo mv $BACKUP_DIR $APP_DIR
-    # No borramos la bandera. Se reintentará en el próximo apagado.
-    exit 1
-fi
-
-# 4. Crear venv si no existe y luego instalar dependencias
-VENV_DIR="$APP_DIR/.venv"
-if [ ! -d "$VENV_DIR" ]; then
-    log "El directorio venv no existe. Creándolo ahora..."
-    # Creamos el venv como el usuario 'cosigein'
-    sudo -u cosigein python3 -m venv $VENV_DIR
-fi
-
-if [ -f "$APP_DIR/requirements.txt" ]; then
-    log "Instalando/actualizando dependencias en el venv..."
-    sudo $VENV_DIR/bin/pip install -r "$APP_DIR/requirements.txt"
-fi
-
-# 5. Mover y recargar el servicio systemd si ha cambiado
-if [ -f "$APP_DIR/services/$APP_SERVICE" ]; then
-    # Comprobar si el archivo de servicio ha cambiado realmente
-    if ! cmp -s "$APP_DIR/services/$APP_SERVICE" "/etc/systemd/system/$APP_SERVICE"; then
-        log "El archivo de servicio ha cambiado. Actualizando..."
-        sudo cp "$APP_DIR/services/$APP_SERVICE" "/etc/systemd/system/$APP_SERVICE"
-        sudo systemctl daemon-reload
-    else
-        log "El archivo de servicio no ha cambiado."
+    log "Ejecutando 'git pull' como 'cosigein'..."
+    if ! sudo -u cosigein git pull; then
+        log "ERROR: 'git pull' falló. Se reintentará en el próximo arranque."
+        systemctl start $APP_SERVICE
+        exit 1
     fi
+
+    log "Instalando/actualizando dependencias..."
+    /home/cosigein/fire-truck-app/.venv/bin/pip install -r requirements.txt
+
+    log "¡Actualización completada! Reiniciando el sistema para aplicar los cambios."
+    reboot
+
+elif [[ $GIT_OUTPUT == *"Your branch is up to date"* ]]; then
+    log "La aplicación ya está actualizada."
+    exit 0
+else
+    log "Estado de Git no reconocido o error. Saliendo."
+    log "Salida de Git: $GIT_OUTPUT"
+    exit 1
 fi
-
-# 6. Limpieza
-log "Limpiando archivos temporales..."
-sudo rm -f $UPDATE_FLAG
-
-log "¡Actualización completada con éxito! El sistema procederá con el apagado/reinicio."
-exit 0
 ```
 
 ## Archivo: `.\services\app.service`
@@ -347,42 +273,20 @@ RestartSec=5s
 WantedBy=multi-user.target
 ```
 
-## Archivo: `.\services\update-on-shutdown.service`
-
-```ini
-[Unit]
-Description=Install pending application update on shutdown
-# Este servicio NO debe tener dependencias por defecto
-DefaultDependencies=no
-# Debe ejecutarse ANTES del apagado final, pero DESPUÉS de que la red y tu app se detengan
-After=app.service network.target
-Before=shutdown.target reboot.target halt.target
-
-[Service]
-Type=oneshot
-# Ejecuta el script de instalación. El script ya comprueba si hay algo que hacer.
-ExecStart=/home/cosigein/fire-truck-app/scripts/install_update.sh
-# Es importante que el servicio no falle si el script no hace nada
-RemainAfterExit=yes
-
-[Install]
-# Este servicio se activa cuando el sistema entra en el objetivo de apagado
-WantedBy=shutdown.target
-```
-
 ## Archivo: `.\services\updater.service`
 
 ```ini
 [Unit]
-Description=Comprobador de actualizaciones para fire-truck-app
+Description=Comprueba e instala actualizaciones para fire-truck-app
 After=network-online.target
 Wants=network-online.target
+# Asegúrate de que tu app principal no arranque hasta que el updater termine
+Before=app.service
 
 [Service]
 Type=oneshot
-User=cosigein
-Group=cosigein
-ExecStart=/home/cosigein/fire-truck-app/scripts/check_update.sh
+TimeoutStartSec=5min
+ExecStart=/home/cosigein/fire-truck-app/scripts/check_and_install_update.sh
 
 [Install]
 WantedBy=multi-user.target
