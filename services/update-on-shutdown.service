@@ -1,10 +1,9 @@
 [Unit]
 Description=Install pending application update on shutdown
-# Este servicio NO debe tener dependencias por defecto
 DefaultDependencies=no
-# Debe ejecutarse ANTES del apagado final, pero DESPUÉS de que la red y tu app se detengan
-After=app.service network.target
-Before=shutdown.target reboot.target halt.target
+Requires=network-online.target
+Before=network-pre.target shutdown.target reboot.target halt.target
+After=app.service
 
 [Service]
 Type=oneshot
