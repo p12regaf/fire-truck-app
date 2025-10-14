@@ -80,6 +80,10 @@ class AppController:
         log.info(f"Tipos de datos activos: {self.active_data_types}")
 
         self._setup_gpio_pins()
+        
+        # Crear los directorios de datos necesarios (ej. /datos/CAN, /datos/GPS)
+        self.session_manager.ensure_data_directories(self.active_data_types)
+
 
     def _setup_gpio_pins(self):
         """
@@ -102,34 +106,35 @@ class AppController:
             log.info("Configuración centralizada de GPIO completada.")
         except Exception as e:
             log.critical(f"FALLO CRÍTICO durante la configuración centralizada de GPIO: {e}")
-            # Opcional: podrías querer detener la app aquí si GPIO es esencial
-            # self.shutdown_event.set() 
 
-    def _precreate_log_files(self):
+    def _write_session_headers(self):
         """
-        Crea archivos de log vacíos para todas las fuentes de datos activas
-        al inicio de la sesión para asegurar su existencia.
+        Escribe la cabecera de la nueva sesión en cada archivo de log diario
+        y prepara los archivos RealTime.
         """
-        log.info("Pre-creando archivos de log para la sesión actual...")
+        log.info("Escribiendo cabeceras de sesión en archivos de log diarios...")
         for data_type in self.active_data_types:
             try:
+                # Escribir cabecera en el archivo de log principal
                 log_path = self.session_manager.get_log_path(data_type)
-                with open(log_path, 'a'):
-                    os.utime(log_path, None)
+                session_header = self.session_manager.get_session_header(data_type)
+                with open(log_path, 'a') as f:
+                    f.write(session_header)
                 
+                # Preparar el archivo de tiempo real
                 rt_path = self.session_manager.get_realtime_log_path(data_type)
                 with open(rt_path, 'w') as f:
-                    f.write("Session started. Waiting for data...\n")
+                    f.write(f"Session {self.session_manager.current_session_id} started. Waiting for data...\n")
                     
             except IOError as e:
-                log.error(f"No se pudo pre-crear el archivo de log para '{data_type}': {e}")
-        log.info("Pre-creación de archivos completada.")
+                log.error(f"No se pudo escribir la cabecera para '{data_type}': {e}")
+        log.info("Escritura de cabeceras de sesión completada.")
 
     def start(self):
         """Inicia todos los hilos de trabajo y el procesador de datos."""
         log.info("Iniciando todos los servicios del controlador...")
         
-        self._precreate_log_files()
+        self._write_session_headers()
         
         self.processor_thread.start()
         for worker in self.workers:
@@ -142,10 +147,6 @@ class AppController:
             return
             
         log.info("Iniciando secuencia de apagado...")
-
-        # --- CAMBIO: Se ha eliminado la llamada a _perform_final_upload() ---
-        # La nueva lógica del FTPTransmitter maneja las subidas de forma más robusta.
-
         self.shutdown_event.set()
 
         # Esperar a que los hilos de trabajo terminen
@@ -163,13 +164,12 @@ class AppController:
             
         log.info("Secuencia de apagado completada.")
 
-    # --- CAMBIO: El método _perform_final_upload() ha sido eliminado por completo ---
-
     def is_shutting_down(self) -> bool:
         return self.shutdown_event.is_set()
 
     def _process_data_queue(self):
         """
+
         Bucle principal que consume la cola de datos, los registra y actualiza el estado.
         """
         log.info("Procesador de datos iniciado.")
@@ -186,6 +186,7 @@ class AppController:
                 
                 log_file_path = self.session_manager.get_log_path(data_type)
                 try:
+                    # El modo 'a' (append) es clave para el log diario
                     with open(log_file_path, 'a') as f:
                         log_line = f"{timestamp};{data_content}\n"
                         f.write(log_line)
