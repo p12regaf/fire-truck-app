@@ -64,27 +64,23 @@ data_sources:
     # Tiempo máximo en segundos para esperar una respuesta a una consulta.
     response_timeout_sec: 0.5
 
-    # Lista de consultas (PIDs de OBD-II) a realizar en bucle.
-    # El formato del payload es [longitud, modo, PID]
-    queries:
-      - name: "Engine RPM"
-        # Payload para solicitar las RPM del motor (Modo 01, PID 0C)
-        request_payload: [0x02, 0x01, 0x0C]
+    # Lista de PGNs (Parameter Group Numbers) de J1939 a escuchar.
+    # La aplicación filtrará y parseará solo los mensajes con estos PGNs.
+    pgn_to_listen:
+      - name: "Engine Speed"
+        pgn: 61444  # 0xF004
         unit: "rpm"
       
-      - name: "Vehicle Speed"
-        # Payload para solicitar la velocidad del vehículo (Modo 01, PID 0D)
-        request_payload: [0x02, 0x01, 0x0D]
+      - name: "Wheel-Based Vehicle Speed"
+        pgn: 65265  # 0xFEF1
         unit: "km/h"
-
+        
       - name: "Engine Coolant Temperature"
-        # Payload para solicitar la temperatura del refrigerante (Modo 01, PID 05)
-        request_payload: [0x02, 0x01, 0x05]
+        pgn: 65262  # 0xFEEE
         unit: "°C"
         
-      - name: "Throttle Position"
-        # Payload para solicitar la posición del acelerador (Modo 01, PID 11)
-        request_payload: [0x02, 0x01, 0x11]
+      - name: "Accelerator Pedal Position 1"
+        pgn: 61443 # 0xF003
         unit: "%"
 
   gps:
