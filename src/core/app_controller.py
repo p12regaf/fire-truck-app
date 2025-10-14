@@ -61,6 +61,7 @@ class AppController:
             self.active_data_types.append('rotativo')
 
         if self.config.get('ftp', {}).get('enabled', False):
+            log.info("FTP Transmitter está habilitado. Inicializando...")
             self.workers.append(FTPTransmitter(self.config, self.shutdown_event, self.session_manager))
         
         if self.config.get('system', {}).get('power_monitor', {}).get('enabled', False):
