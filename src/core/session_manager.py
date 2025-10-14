@@ -1,5 +1,3 @@
-# Contenido COMPLETO para: ./src/core/session_manager.py
-
 import json
 import logging
 import os
@@ -10,32 +8,37 @@ log = logging.getLogger(__name__)
 
 class SessionManager:
     """
-    Gestiona la creación de archivos de log, rutas y una sesión global por cada
-    arranque de la aplicación.
+    Gestiona la creación de archivos de log diarios y el versionado de sesiones
+    dentro de esos archivos.
     """
+    # Mapeo de tipos de datos internos a los nombres de carpeta/fichero deseados
+    DATA_TYPE_MAP = {
+        "can": "CAN",
+        "gps": "GPS",
+        "estabilometro": "ESTABILIDAD",
+        "rotativo": "ROTATIVO"
+    }
+
     def __init__(self, config: dict):
         self.config = config
         paths_config = config.get('paths', {})
-        self.data_root = paths_config.get('data_root', '/tmp/hums_data')
-        self.db_path = paths_config.get('session_db', '/tmp/hums_session.json')
-        self.device_id = config.get('system', {}).get('device_number', '000')
+        system_config = config.get('system', {})
+
+        self.data_root = paths_config.get('data_root', '/tmp/fire-truck-app_data')
+        self.db_path = paths_config.get('session_db', '/tmp/fire-truck-app_session.json')
+        
+        device_number = system_config.get('device_number', '000')
+        # Construimos el nombre del dispositivo según el formato requerido
+        self.device_name = f"DOBACK{device_number}"
+
         self.lock = Lock()
         
         now = datetime.now()
-        self.today_str = now.strftime('%Y%m%d')
-        self.session_time_str = now.strftime('%H-%M-%S')
-        
-        self.current_session_id = self._initialize_session() # <--- Esta línea necesita el método de abajo
-        
-        session_folder_name = f"session_{self.current_session_id:03d}_{self.session_time_str}"
-        self.session_path = os.path.join(self.data_root, self.today_str, session_folder_name)
-        
-        try:
-            os.makedirs(self.session_path, exist_ok=True)
-            log.info(f"Sesión activa: {self.current_session_id}. Directorio de datos: {self.session_path}")
-        except OSError as e:
-            log.critical(f"No se pudo crear el directorio de la sesión: {self.session_path}. Error: {e}")
-            raise
+        self.today_str_ymd = now.strftime('%Y%m%d') # Formato para nombre de archivo
+        self.session_time = now # Guardamos el objeto datetime para la cabecera
+
+        self.current_session_id = self._initialize_session()
+        log.info(f"Sesión activa: {self.current_session_id} para el día {self.today_str_ymd}.")
 
     def _load_session_db(self) -> dict:
         """Carga el estado de la sesión desde el archivo JSON."""
@@ -57,37 +60,67 @@ class SessionManager:
         except IOError as e:
             log.error(f"No se pudo guardar el archivo de sesión en {self.db_path}: {e}")
             
-    # --- MÉTODO QUE FALTABA ---
     def _initialize_session(self) -> int:
         """
         Determina el ID de la sesión actual.
         Si es un nuevo día, el contador de sesión se resetea a 1.
         Si es el mismo día, el contador se incrementa.
-        Este método se ejecuta una sola vez al inicio de la aplicación.
         """
         with self.lock:
             session_data = self._load_session_db()
             counters = session_data.get("session_counters", {})
             
-            last_session_today = counters.get(self.today_str, 0)
-            
+            last_session_today = counters.get(self.today_str_ymd, 0)
             new_session_id = last_session_today + 1
             
-            counters[self.today_str] = new_session_id
+            counters[self.today_str_ymd] = new_session_id
             session_data["session_counters"] = counters
             self._save_session_db(session_data)
             
             return new_session_id
-    # --- FIN DEL MÉTODO QUE FALTABA ---
+
+    def _get_data_type_name(self, internal_type: str) -> str:
+        """Devuelve el nombre de tipo de dato formateado (ej. 'CAN', 'ESTABILIDAD')."""
+        return self.DATA_TYPE_MAP.get(internal_type, internal_type.upper())
+
+    def ensure_data_directories(self, active_data_types: list):
+        """Crea los directorios base para cada tipo de dato si no existen."""
+        log.info("Asegurando la existencia de directorios de datos...")
+        for data_type in active_data_types:
+            type_name = self._get_data_type_name(data_type)
+            dir_path = os.path.join(self.data_root, type_name)
+            try:
+                os.makedirs(dir_path, exist_ok=True)
+            except OSError as e:
+                log.critical(f"No se pudo crear el directorio de datos '{dir_path}': {e}")
 
     def get_log_path(self, data_type: str) -> str:
         """
-        Obtiene la ruta del archivo de log para un tipo de dato dentro de la sesión actual.
+        Obtiene la ruta del archivo de log diario para un tipo de dato.
+        Ej: /datos/CAN/CAN_DOBACK001_20251001.log
         """
-        filename = f"{self.today_str}_{self.device_id}_{data_type.upper()}.log"
-        return os.path.join(self.session_path, filename)
+        type_name = self._get_data_type_name(data_type)
+        filename = f"{type_name}_{self.device_name}_{self.today_str_ymd}.log"
+        return os.path.join(self.data_root, type_name, filename)
 
     def get_realtime_log_path(self, data_type: str) -> str:
-        """Obtiene la ruta para el archivo de estado en tiempo real dentro de la sesión actual."""
-        filename = f"{self.today_str}_{self.device_id}_{data_type.upper()}_RealTime.txt"
-        return os.path.join(self.session_path, filename)
+        """
+        Obtiene la ruta para el archivo de estado en tiempo real.
+        Ej: /datos/CAN/CAN_DOBACK001_RealTime.txt
+        """
+        type_name = self._get_data_type_name(data_type)
+        filename = f"{type_name}_{self.device_name}_RealTime.txt"
+        return os.path.join(self.data_root, type_name, filename)
+
+    def get_session_header(self, data_type: str) -> str:
+        """
+        Genera la cabecera de la sesión para ser escrita en el archivo de log.
+        Ej: ESTABILIDAD;01/10/2025 09:36:54;DOBACK024;Sesión:1;
+        """
+        type_name = self._get_data_type_name(data_type)
+        timestamp_str = self.session_time.strftime('%d/%m/%Y %H:%M:%S')
+        header = (
+            f"\n{type_name};{timestamp_str};{self.device_name};"
+            f"Sesión:{self.current_session_id};\n"
+        )
+        return header
