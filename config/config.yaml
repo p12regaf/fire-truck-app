@@ -56,6 +56,36 @@ data_sources:
     interface: "can0"
     bitrate: 500000
     inactivity_timeout_sec: 10
+  
+    # ID de la petición de diagnóstico estándar (broadcast)
+    request_id: 0x7DF 
+    # Intervalo en segundos entre cada consulta para no saturar el bus.
+    query_interval_sec: 0.2
+    # Tiempo máximo en segundos para esperar una respuesta a una consulta.
+    response_timeout_sec: 0.5
+
+    # Lista de consultas (PIDs de OBD-II) a realizar en bucle.
+    # El formato del payload es [longitud, modo, PID]
+    queries:
+      - name: "Engine RPM"
+        # Payload para solicitar las RPM del motor (Modo 01, PID 0C)
+        request_payload: [0x02, 0x01, 0x0C]
+        unit: "rpm"
+      
+      - name: "Vehicle Speed"
+        # Payload para solicitar la velocidad del vehículo (Modo 01, PID 0D)
+        request_payload: [0x02, 0x01, 0x0D]
+        unit: "km/h"
+
+      - name: "Engine Coolant Temperature"
+        # Payload para solicitar la temperatura del refrigerante (Modo 01, PID 05)
+        request_payload: [0x02, 0x01, 0x05]
+        unit: "°C"
+        
+      - name: "Throttle Position"
+        # Payload para solicitar la posición del acelerador (Modo 01, PID 11)
+        request_payload: [0x02, 0x01, 0x11]
+        unit: "%"
 
   gps:
     enabled: true
