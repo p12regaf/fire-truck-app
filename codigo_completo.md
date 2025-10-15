@@ -506,6 +506,10 @@ class AppController:
         log.info(f"Tipos de datos activos: {self.active_data_types}")
 
         self._setup_gpio_pins()
+        
+        # Crear los directorios de datos necesarios (ej. /datos/CAN, /datos/GPS)
+        self.session_manager.ensure_data_directories(self.active_data_types)
+
 
     def _setup_gpio_pins(self):
         """
@@ -528,34 +532,35 @@ class AppController:
             log.info("Configuración centralizada de GPIO completada.")
         except Exception as e:
             log.critical(f"FALLO CRÍTICO durante la configuración centralizada de GPIO: {e}")
-            # Opcional: podrías querer detener la app aquí si GPIO es esencial
-            # self.shutdown_event.set() 
 
-    def _precreate_log_files(self):
+    def _write_session_headers(self):
         """
-        Crea archivos de log vacíos para todas las fuentes de datos activas
-        al inicio de la sesión para asegurar su existencia.
+        Escribe la cabecera de la nueva sesión en cada archivo de log diario
+        y prepara los archivos RealTime.
         """
-        log.info("Pre-creando archivos de log para la sesión actual...")
+        log.info("Escribiendo cabeceras de sesión en archivos de log diarios...")
         for data_type in self.active_data_types:
             try:
+                # Escribir cabecera en el archivo de log principal
                 log_path = self.session_manager.get_log_path(data_type)
-                with open(log_path, 'a'):
-                    os.utime(log_path, None)
+                session_header = self.session_manager.get_session_header(data_type)
+                with open(log_path, 'a') as f:
+                    f.write(session_header)
                 
+                # Preparar el archivo de tiempo real
                 rt_path = self.session_manager.get_realtime_log_path(data_type)
                 with open(rt_path, 'w') as f:
-                    f.write("Session started. Waiting for data...\n")
+                    f.write(f"Session {self.session_manager.current_session_id} started. Waiting for data...\n")
                     
             except IOError as e:
-                log.error(f"No se pudo pre-crear el archivo de log para '{data_type}': {e}")
-        log.info("Pre-creación de archivos completada.")
+                log.error(f"No se pudo escribir la cabecera para '{data_type}': {e}")
+        log.info("Escritura de cabeceras de sesión completada.")
 
     def start(self):
         """Inicia todos los hilos de trabajo y el procesador de datos."""
         log.info("Iniciando todos los servicios del controlador...")
         
-        self._precreate_log_files()
+        self._write_session_headers()
         
         self.processor_thread.start()
         for worker in self.workers:
@@ -568,10 +573,6 @@ class AppController:
             return
             
         log.info("Iniciando secuencia de apagado...")
-
-        # --- CAMBIO: Se ha eliminado la llamada a _perform_final_upload() ---
-        # La nueva lógica del FTPTransmitter maneja las subidas de forma más robusta.
-
         self.shutdown_event.set()
 
         # Esperar a que los hilos de trabajo terminen
@@ -589,13 +590,12 @@ class AppController:
             
         log.info("Secuencia de apagado completada.")
 
-    # --- CAMBIO: El método _perform_final_upload() ha sido eliminado por completo ---
-
     def is_shutting_down(self) -> bool:
         return self.shutdown_event.is_set()
 
     def _process_data_queue(self):
         """
+
         Bucle principal que consume la cola de datos, los registra y actualiza el estado.
         """
         log.info("Procesador de datos iniciado.")
@@ -612,6 +612,7 @@ class AppController:
                 
                 log_file_path = self.session_manager.get_log_path(data_type)
                 try:
+                    # El modo 'a' (append) es clave para el log diario
                     with open(log_file_path, 'a') as f:
                         log_line = f"{timestamp};{data_content}\n"
                         f.write(log_line)
@@ -856,8 +857,6 @@ class RebootMonitor(threading.Thread):
 ## Archivo: `.\src\core\session_manager.py`
 
 ```python
-# Contenido COMPLETO para: ./src/core/session_manager.py
-
 import json
 import logging
 import os
@@ -868,32 +867,37 @@ log = logging.getLogger(__name__)
 
 class SessionManager:
     """
-    Gestiona la creación de archivos de log, rutas y una sesión global por cada
-    arranque de la aplicación.
+    Gestiona la creación de archivos de log diarios y el versionado de sesiones
+    dentro de esos archivos.
     """
+    # Mapeo de tipos de datos internos a los nombres de carpeta/fichero deseados
+    DATA_TYPE_MAP = {
+        "can": "CAN",
+        "gps": "GPS",
+        "estabilometro": "ESTABILIDAD",
+        "rotativo": "ROTATIVO"
+    }
+
     def __init__(self, config: dict):
         self.config = config
         paths_config = config.get('paths', {})
-        self.data_root = paths_config.get('data_root', '/tmp/hums_data')
-        self.db_path = paths_config.get('session_db', '/tmp/hums_session.json')
-        self.device_id = config.get('system', {}).get('device_number', '000')
+        system_config = config.get('system', {})
+
+        self.data_root = paths_config.get('data_root', '/tmp/fire-truck-app_data')
+        self.db_path = paths_config.get('session_db', '/tmp/fire-truck-app_session.json')
+        
+        device_number = system_config.get('device_number', '000')
+        # Construimos el nombre del dispositivo según el formato requerido
+        self.device_name = f"DOBACK{device_number}"
+
         self.lock = Lock()
         
         now = datetime.now()
-        self.today_str = now.strftime('%Y%m%d')
-        self.session_time_str = now.strftime('%H-%M-%S')
-        
-        self.current_session_id = self._initialize_session() # <--- Esta línea necesita el método de abajo
-        
-        session_folder_name = f"session_{self.current_session_id:03d}_{self.session_time_str}"
-        self.session_path = os.path.join(self.data_root, self.today_str, session_folder_name)
-        
-        try:
-            os.makedirs(self.session_path, exist_ok=True)
-            log.info(f"Sesión activa: {self.current_session_id}. Directorio de datos: {self.session_path}")
-        except OSError as e:
-            log.critical(f"No se pudo crear el directorio de la sesión: {self.session_path}. Error: {e}")
-            raise
+        self.today_str_ymd = now.strftime('%Y%m%d') # Formato para nombre de archivo
+        self.session_time = now # Guardamos el objeto datetime para la cabecera
+
+        self.current_session_id = self._initialize_session()
+        log.info(f"Sesión activa: {self.current_session_id} para el día {self.today_str_ymd}.")
 
     def _load_session_db(self) -> dict:
         """Carga el estado de la sesión desde el archivo JSON."""
@@ -915,40 +919,70 @@ class SessionManager:
         except IOError as e:
             log.error(f"No se pudo guardar el archivo de sesión en {self.db_path}: {e}")
             
-    # --- MÉTODO QUE FALTABA ---
     def _initialize_session(self) -> int:
         """
         Determina el ID de la sesión actual.
         Si es un nuevo día, el contador de sesión se resetea a 1.
         Si es el mismo día, el contador se incrementa.
-        Este método se ejecuta una sola vez al inicio de la aplicación.
         """
         with self.lock:
             session_data = self._load_session_db()
             counters = session_data.get("session_counters", {})
             
-            last_session_today = counters.get(self.today_str, 0)
-            
+            last_session_today = counters.get(self.today_str_ymd, 0)
             new_session_id = last_session_today + 1
             
-            counters[self.today_str] = new_session_id
+            counters[self.today_str_ymd] = new_session_id
             session_data["session_counters"] = counters
             self._save_session_db(session_data)
             
             return new_session_id
-    # --- FIN DEL MÉTODO QUE FALTABA ---
+
+    def _get_data_type_name(self, internal_type: str) -> str:
+        """Devuelve el nombre de tipo de dato formateado (ej. 'CAN', 'ESTABILIDAD')."""
+        return self.DATA_TYPE_MAP.get(internal_type, internal_type.upper())
+
+    def ensure_data_directories(self, active_data_types: list):
+        """Crea los directorios base para cada tipo de dato si no existen."""
+        log.info("Asegurando la existencia de directorios de datos...")
+        for data_type in active_data_types:
+            type_name = self._get_data_type_name(data_type)
+            dir_path = os.path.join(self.data_root, type_name)
+            try:
+                os.makedirs(dir_path, exist_ok=True)
+            except OSError as e:
+                log.critical(f"No se pudo crear el directorio de datos '{dir_path}': {e}")
 
     def get_log_path(self, data_type: str) -> str:
         """
-        Obtiene la ruta del archivo de log para un tipo de dato dentro de la sesión actual.
+        Obtiene la ruta del archivo de log diario para un tipo de dato.
+        Ej: /datos/CAN/CAN_DOBACK001_20251001.log
         """
-        filename = f"{self.today_str}_{self.device_id}_{data_type.upper()}.log"
-        return os.path.join(self.session_path, filename)
+        type_name = self._get_data_type_name(data_type)
+        filename = f"{type_name}_{self.device_name}_{self.today_str_ymd}.log"
+        return os.path.join(self.data_root, type_name, filename)
 
     def get_realtime_log_path(self, data_type: str) -> str:
-        """Obtiene la ruta para el archivo de estado en tiempo real dentro de la sesión actual."""
-        filename = f"{self.today_str}_{self.device_id}_{data_type.upper()}_RealTime.txt"
-        return os.path.join(self.session_path, filename)
+        """
+        Obtiene la ruta para el archivo de estado en tiempo real.
+        Ej: /datos/CAN/CAN_DOBACK001_RealTime.txt
+        """
+        type_name = self._get_data_type_name(data_type)
+        filename = f"{type_name}_{self.device_name}_RealTime.txt"
+        return os.path.join(self.data_root, type_name, filename)
+
+    def get_session_header(self, data_type: str) -> str:
+        """
+        Genera la cabecera de la sesión para ser escrita en el archivo de log.
+        Ej: ESTABILIDAD;01/10/2025 09:36:54;DOBACK024;Sesión:1;
+        """
+        type_name = self._get_data_type_name(data_type)
+        timestamp_str = self.session_time.strftime('%d/%m/%Y %H:%M:%S')
+        header = (
+            f"\n{type_name};{timestamp_str};{self.device_name};"
+            f"Sesión:{self.current_session_id};\n"
+        )
+        return header
 ```
 
 ## Archivo: `.\src\core\__init__.py`
@@ -1589,18 +1623,17 @@ import logging
 import os
 import threading
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 
 log = logging.getLogger(__name__)
 
 class FTPTransmitter(threading.Thread):
     """
     Gestiona la subida de archivos al servidor FTP.
-    - Al iniciar, busca y sube todas las sesiones pasadas no subidas.
-    - Periódicamente, repite este proceso.
-    - Periódicamente, sube los archivos de estado en tiempo real de la sesión actual.
+    - Periódicamente, escanea el directorio de datos.
+    - Sube los archivos de log de días anteriores (.log).
+    - Sube siempre los archivos de estado en tiempo real (_RealTime.txt).
     """
-    UPLOAD_FLAG_FILENAME = ".ftp_uploaded"
 
     def __init__(self, config: dict, shutdown_event: threading.Event, session_manager):
         super().__init__(name="FTPTransmitter")
@@ -1610,8 +1643,6 @@ class FTPTransmitter(threading.Thread):
         self.session_manager = session_manager
         
         self.scan_interval = self.ftp_config.get('upload_interval_sec', 300)
-        self.realtime_interval = self.ftp_config.get('realtime_interval_sec', 30)
-        self.last_realtime_upload_time = 0
 
     def run(self):
         log.info("Iniciando transmisor FTP.")
@@ -1623,16 +1654,7 @@ class FTPTransmitter(threading.Thread):
         
         while not self.shutdown_event.is_set():
             # Esperar para el próximo ciclo de escaneo completo.
-            # Usamos wait con un timeout más corto para poder reaccionar antes al apagado.
-            wait_time = self.scan_interval
-            while wait_time > 0 and not self.shutdown_event.is_set():
-                # Comprobar si es hora de subir los archivos en tiempo real
-                if time.time() - self.last_realtime_upload_time > self.realtime_interval:
-                    self._upload_current_session_realtime()
-
-                sleep_chunk = min(wait_time, 5.0) # Dormir en trozos de 5s
-                time.sleep(sleep_chunk)
-                wait_time -= sleep_chunk
+            self.shutdown_event.wait(self.scan_interval)
 
             if self.shutdown_event.is_set():
                 break
@@ -1648,39 +1670,27 @@ class FTPTransmitter(threading.Thread):
             ftp = ftplib.FTP()
             ftp.connect(self.ftp_config['host'], self.ftp_config['port'], timeout=20)
             ftp.login(self.ftp_config['user'], self.ftp_config['pass'])
-            log.debug("Conexión FTP establecida.")
+            # Entrar en el directorio base de datos_doback
+            base_remote_dir = "datos_doback"
+            if base_remote_dir not in ftp.nlst():
+                log.info(f"Creando directorio remoto base: {base_remote_dir}")
+                ftp.mkd(base_remote_dir)
+            ftp.cwd(base_remote_dir)
+            log.debug("Conexión FTP establecida y en directorio 'datos_doback'.")
             return ftp
         except ftplib.all_errors as e:
             log.error(f"Error de conexión FTP: {e}")
             return None
-    
-    def _upload_current_session_realtime(self):
-        """Sube solo los archivos _RealTime.txt de la sesión actual."""
-        log.debug("Iniciando subida de archivos en tiempo real.")
-        ftp = self._connect_ftp()
-        if not ftp:
-            return
-
-        try:
-            session_path = self.session_manager.session_path
-            for filename in os.listdir(session_path):
-                if "RealTime.txt" in filename:
-                    local_path = os.path.join(session_path, filename)
-                    self._upload_file(ftp, local_path)
-            self.last_realtime_upload_time = time.time()
-        except Exception as e:
-            log.error(f"Error inesperado subiendo archivos en tiempo real: {e}")
-        finally:
-            ftp.quit()
 
     def _perform_upload_cycle(self):
         """
-        Escanea todos los directorios de sesión. Sube las sesiones pasadas y
-        los archivos en tiempo real de la sesión actual.
+        Escanea todos los directorios de datos y sube los archivos pertinentes.
+        - Archivos .log de días pasados.
+        - Archivos _RealTime.txt siempre.
         """
         log.info("Iniciando nuevo ciclo de escaneo para subida FTP...")
         data_root = self.paths_config.get('data_root')
-        current_session_path = self.session_manager.session_path
+        today_str = datetime.now().strftime('%Y%m%d')
 
         if not os.path.isdir(data_root):
             log.warning(f"El directorio raíz de datos '{data_root}' no existe. No hay nada que subir.")
@@ -1692,111 +1702,87 @@ class FTPTransmitter(threading.Thread):
             return
 
         try:
-            # Iterar sobre las carpetas de fecha (ej. '20231225')
-            for date_dir in sorted(os.listdir(data_root)):
-                date_path = os.path.join(data_root, date_dir)
-                if not os.path.isdir(date_path): continue
+            # Iterar sobre los directorios de tipo de dato (CAN, GPS, etc.)
+            for data_type_dir in os.listdir(data_root):
+                local_type_path = os.path.join(data_root, data_type_dir)
+                if not os.path.isdir(local_type_path):
+                    continue
 
-                # Iterar sobre las carpetas de sesión (ej. 'session_001_12-34-56')
-                for session_dir in sorted(os.listdir(date_path)):
-                    session_path = os.path.join(date_path, session_dir)
-                    if not os.path.isdir(session_path): continue
-                    
+                # Iterar sobre los archivos dentro de cada directorio de tipo
+                for filename in os.listdir(local_type_path):
                     if self.shutdown_event.is_set():
                         log.warning("Señal de apagado recibida durante el ciclo de subida. Abortando.")
                         return
 
-                    # Comprobar si la sesión es la actual o una pasada
-                    if session_path == current_session_path:
-                        # Para la sesión actual, no hacemos nada aquí, se gestiona con _upload_current_session_realtime
-                        continue
-                    else:
-                        # Es una sesión pasada, procesarla para subirla si es necesario
-                        self._process_past_session(ftp, session_path)
-        
+                    local_file_path = os.path.join(local_type_path, filename)
+                    
+                    upload = False
+                    if filename.endswith("_RealTime.txt"):
+                        upload = True
+                    elif filename.endswith(".log"):
+                        # Extraer la fecha del nombre del archivo
+                        try:
+                            file_date_str = filename.split('_')[-1].split('.')[0]
+                            if file_date_str < today_str:
+                                upload = True
+                        except IndexError:
+                            log.warning(f"No se pudo extraer la fecha del nombre de archivo: {filename}. Omitiendo.")
+                    
+                    if upload:
+                        self._upload_file(ftp, local_file_path)
+
         except Exception as e:
-            log.error(f"Error inesperado durante el ciclo de subida FTP: {e}")
+            log.error(f"Error inesperado durante el ciclo de subida FTP: {e}", exc_info=True)
         finally:
             ftp.quit()
 
-    def _process_past_session(self, ftp, session_path: str):
-        """
-        Sube todos los archivos de una sesión pasada si no ha sido subida antes.
-        """
-        flag_file_path = os.path.join(session_path, self.UPLOAD_FLAG_FILENAME)
-        if os.path.exists(flag_file_path):
-            log.debug(f"La sesión {os.path.basename(session_path)} ya fue subida. Omitiendo.")
-            return
-
-        log.info(f"Nueva sesión para subir encontrada: {os.path.basename(session_path)}")
-        
-        files_to_upload = [f for f in os.listdir(session_path) if os.path.isfile(os.path.join(session_path, f))]
-        
-        if not files_to_upload:
-            log.warning(f"La sesión {os.path.basename(session_path)} está vacía. Marcando como subida.")
-            self._create_upload_flag(session_path)
-            return
-
-        success = True
-        for filename in files_to_upload:
-            local_path = os.path.join(session_path, filename)
-            if not self._upload_file(ftp, local_path):
-                success = False
-                log.error(f"Fallo al subir el archivo {filename} de la sesión {os.path.basename(session_path)}. Se reintentará en el próximo ciclo.")
-                break # Si un archivo falla, no marcar la sesión como subida
-        
-        if success:
-            log.info(f"Todos los archivos de la sesión {os.path.basename(session_path)} subidos con éxito.")
-            self._create_upload_flag(session_path)
-
     def _upload_file(self, ftp, local_path: str) -> bool:
-        """Sube un único archivo al servidor FTP, creando la estructura de directorios necesaria."""
+        """
+        Sube un único archivo al servidor FTP, creando la estructura de directorios
+        remota: DOBACKXXX/TIPO_DATO/archivo.
+        """
         try:
-            # Extraer 'fecha/sesion/archivo' de la ruta local
-            parts = local_path.split(os.sep)
-            remote_filename = parts[-1]
-            remote_session_dir = parts[-2]
-            remote_date_dir = parts[-3]
+            filename = os.path.basename(local_path)
+            # Ej: 'CAN' o 'ESTABILIDAD'
+            data_type_name = os.path.basename(os.path.dirname(local_path))
+            device_name = self.session_manager.device_name # Ej: 'DOBACK001'
 
-            # Navegar o crear directorios remotos
-            if remote_date_dir not in ftp.nlst():
-                log.info(f"Creando directorio remoto: {remote_date_dir}")
-                ftp.mkd(remote_date_dir)
-            ftp.cwd(remote_date_dir)
+            # --- Navegar o crear directorios remotos ---
+            # Estamos en 'datos_doback/', ahora creamos 'DOBACKXXX/'
+            if device_name not in ftp.nlst():
+                log.info(f"Creando directorio remoto de dispositivo: {device_name}")
+                ftp.mkd(device_name)
+            ftp.cwd(device_name)
             
-            if remote_session_dir not in ftp.nlst():
-                log.info(f"Creando directorio remoto de sesión: {remote_session_dir}")
-                ftp.mkd(remote_session_dir)
-            ftp.cwd(remote_session_dir)
+            # Ahora creamos 'TIPO_DATO/'
+            if data_type_name not in ftp.nlst():
+                log.info(f"Creando directorio remoto de tipo de dato: {data_type_name}")
+                ftp.mkd(data_type_name)
+            ftp.cwd(data_type_name)
 
-            log.info(f"  -> Subiendo {remote_filename}...")
+            log.info(f"  -> Subiendo {filename} a {ftp.pwd()}...")
             with open(local_path, 'rb') as f:
-                ftp.storbinary(f'STOR {remote_filename}', f)
+                ftp.storbinary(f'STOR {filename}', f)
             
-            # Volver al directorio raíz del FTP para el siguiente archivo
-            ftp.cwd('/')
+            # Volver al directorio base 'datos_doback' para el siguiente archivo
+            ftp.cwd('../..') # Salir de TIPO_DATO y de DOBACKXXX
             return True
             
         except ftplib.all_errors as e:
             log.error(f"Error de FTP al subir el archivo {local_path}: {e}")
-            ftp.cwd('/') # Intentar volver a la raíz en caso de error
+            try:
+                # Intentar volver a la raíz en caso de error para no afectar a la siguiente subida
+                ftp.cwd('/')
+                ftp.cwd('datos_doback')
+            except ftplib.all_errors:
+                log.error("No se pudo volver al directorio FTP base después de un error.")
             return False
         except FileNotFoundError:
             log.warning(f"El archivo {local_path} desapareció antes de poder subirlo.")
-            return True # Considerar éxito para no bloquear la subida de la sesión
+            return True
         except Exception as e:
             log.error(f"Error inesperado al subir {local_path}: {e}")
             return False
-
-    def _create_upload_flag(self, session_path: str):
-        """Crea un archivo vacío para marcar la sesión como subida."""
-        try:
-            flag_file_path = os.path.join(session_path, self.UPLOAD_FLAG_FILENAME)
-            with open(flag_file_path, 'w') as f:
-                pass # Crear archivo vacío
-            log.info(f"Sesión {os.path.basename(session_path)} marcada como subida.")
-        except IOError as e:
-            log.error(f"No se pudo crear el flag de subida para la sesión {os.path.basename(session_path)}: {e}")
 ```
 
 ## Archivo: `.\src\transmitters\__init__.py`

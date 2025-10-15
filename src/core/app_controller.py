@@ -100,8 +100,14 @@ class AppController:
             for worker in self.workers:
                 if isinstance(worker, (PowerMonitor, AlarmMonitor, RebootMonitor)):
                     if worker.pin is not None:
-                        log.info(f"Configurando pin {worker.pin} para {worker.name} con pull_up_down={worker.pull_up_down}")
-                        GPIO.setup(worker.pin, GPIO.IN, pull_up_down=worker.pull_up_down)
+                        if isinstance(worker, RebootMonitor):
+                            # El RebootMonitor actúa como un actuador, estableciendo una señal de 'OK'
+                            log.info(f"Configurando pin {worker.pin} para {worker.name} como SALIDA.")
+                            GPIO.setup(worker.pin, GPIO.OUT)
+                        else:
+                            # Los otros monitores son sensores de entrada
+                            log.info(f"Configurando pin {worker.pin} para {worker.name} como ENTRADA con pull_up_down={worker.pull_up_down}")
+                            GPIO.setup(worker.pin, GPIO.IN, pull_up_down=worker.pull_up_down)
             
             log.info("Configuración centralizada de GPIO completada.")
         except Exception as e:
