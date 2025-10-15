@@ -25,10 +25,11 @@ system:
   
   reboot_monitor:
     enabled: true
-    # Pin GPIO (BCM) para la señal de reinicio de la fuente. Pin 32 (BOARD) -> 12 (BCM).
+    # Pin GPIO (BCM) para la señal de "handshake" o "arranque OK" a la fuente de alimentación.
+    # Al arrancar, la aplicación pondrá este pin en estado ALTO (HIGH).
+    # Pin 32 (BOARD) -> 12 (BCM).
     pin: 12
-    # La señal de reinicio se activa (FALSE) cuando el pin pasa a estado LOW.
-    # Esto implica que el pin debe estar mantenido en HIGH por un circuito externo.
+    # El valor 'pull_up_down' se ignora para este pin, ya que se configura como SALIDA.
     pull_up_down: "PUD_UP"
 
 paths:
