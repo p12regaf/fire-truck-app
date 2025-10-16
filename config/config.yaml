@@ -44,10 +44,10 @@ ftp:
   port: 21
   user: "doback"
   pass: "cosigein2025?"
-  # Intervalo para buscar y subir archivos de log completos.
-  upload_interval_sec: 300
+  # Intervalo para buscar y subir archivos de log completos de días anteriores.
+  log_upload_interval_sec: 300
   # Intervalo para subir los archivos de estado en tiempo real.
-  realtime_interval_sec: 30
+  realtime_upload_interval_sec: 30
   # Los archivos no se subirán si se han modificado en los últimos X segundos.
   upload_safety_margin_sec: 120
 
