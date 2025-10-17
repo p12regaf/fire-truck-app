@@ -1,3 +1,385 @@
+## Archivo: `.\deploy.py`
+
+```python
+# -*- coding: utf-8 -*-
+
+"""
+# =============================================================================
+#  SCRIPT DE DESPLIEGUE AUTOMÁTICO PARA fire-truck-app
+# =============================================================================
+# ... (descripción igual) ...
+"""
+
+import argparse
+import getpass
+import os
+import sys
+import time
+
+try:
+    import paramiko
+except ImportError:
+    print("Error: La librería 'paramiko' no está instalada.")
+    print("Por favor, ejecútala con: pip install paramiko")
+    sys.exit(1)
+
+# --- Configuración ---
+TARGET_USER = "cosigein"
+APP_DIR = f"/home/{TARGET_USER}/fire-truck-app"
+LOG_DIR = f"/home/{TARGET_USER}/logs"
+DATA_DIR = f"/home/{TARGET_USER}/datos"
+# ---------------------
+
+# --- Clases de utilidad para colores en la terminal ---
+class Colors:
+    HEADER = '\033[95m'
+    OKBLUE = '\033[94m'
+    OKCYAN = '\033[96m'
+    OKGREEN = '\033[92m'
+    WARNING = '\033[93m'
+    FAIL = '\033[91m'
+    ENDC = '\033[0m'
+    BOLD = '\033[1m'
+
+def print_step(msg):
+    print(f"\n{Colors.HEADER}{Colors.BOLD}>>> {msg}{Colors.ENDC}")
+
+def print_ok(msg):
+    print(f"{Colors.OKGREEN}[OK] {msg}{Colors.ENDC}")
+
+def print_warn(msg):
+    print(f"{Colors.WARNING}[WARN] {msg}{Colors.ENDC}")
+
+def print_fail(msg):
+    print(f"{Colors.FAIL}[FAIL] {msg}{Colors.ENDC}", file=sys.stderr)
+
+def print_info(msg):
+    print(f"{Colors.OKCYAN}     {msg}{Colors.ENDC}")
+
+
+class SSHDeployer:
+    """Gestiona la conexión SSH y la ejecución de comandos en el dispositivo remoto."""
+    def __init__(self, host, user, password):
+        self.host = host
+        self.user = user
+        self.password = password
+        self.client = None
+        self.sftp = None
+
+    def connect(self):
+        """Establece la conexión SSH."""
+        try:
+            print_info(f"Conectando a {self.host} como {self.user}...")
+            self.client = paramiko.SSHClient()
+            self.client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            self.client.connect(self.host, username=self.user, password=self.password, timeout=10)
+            self.sftp = self.client.open_sftp()
+            print_ok("Conexión SSH establecida.")
+        except Exception as e:
+            print_fail(f"No se pudo conectar: {e}")
+            raise
+
+    def disconnect(self):
+        """Cierra la conexión SSH."""
+        if self.sftp:
+            self.sftp.close()
+        if self.client:
+            self.client.close()
+        print_ok("Conexión SSH cerrada.")
+
+    def execute(self, command, use_sudo=False, ignore_errors=False):
+        """Ejecuta un comando en el dispositivo remoto."""
+        print_info(f"Ejecutando: {command}")
+        full_command = command
+        
+        if use_sudo:
+            full_command = f"sudo -S -p '' {command}"
+
+        try:
+            # **CORRECCIÓN FINAL**: Quitar get_pty=True para que `sudo -S` funcione correctamente.
+            stdin, stdout, stderr = self.client.exec_command(full_command)
+            
+            if use_sudo:
+                stdin.write(self.password + '\n')
+                stdin.flush()
+                stdin.channel.shutdown_write()
+
+            # Leer la salida ANTES de esperar el código de finalización.
+            out = stdout.read().decode('utf-8', errors='ignore').strip()
+            err = stderr.read().decode('utf-8', errors='ignore').strip()
+            
+            # Ahora que hemos leído la salida, podemos esperar a que el comando termine.
+            exit_code = stdout.channel.recv_exit_status()
+            
+            if err and "Warning: " not in err:
+                # En modo no-pty, sudo a menudo se queja de "no tty present". Lo ignoramos.
+                if "sudo: no tty present" not in err:
+                    print_warn(f"  stderr: {err}")
+
+            if exit_code != 0 and not ignore_errors:
+                error_message = f"El comando falló con código de salida {exit_code}."
+                if err:
+                    error_message += f" Error: {err}"
+                raise Exception(error_message)
+            
+            return out
+        except Exception as e:
+            print_fail(f"Error al ejecutar el comando '{command}': {e}")
+            raise
+            
+    def upload_file(self, local_path, remote_path):
+        """Sube un archivo al dispositivo remoto."""
+        try:
+            print_info(f"Subiendo '{local_path}' a '{remote_path}'")
+            self.sftp.put(local_path, remote_path)
+        except Exception as e:
+            print_fail(f"Error al subir el archivo: {e}")
+            raise
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Script de despliegue para fire-truck-app.")
+    parser.add_argument("host", help="Dirección IP o hostname de la Raspberry Pi.")
+    args = parser.parse_args()
+
+    password = getpass.getpass(f"Introduce la contraseña para el usuario '{TARGET_USER}' en {args.host}: ")
+    repo_url = input(f"{Colors.OKCYAN}Introduce la URL SSH de tu repositorio Git (ej. git@github.com:p12regaf/fire-truck-app.git): {Colors.ENDC}")
+    git_branch = input(f"{Colors.OKCYAN}Introduce el nombre de la rama a desplegar (ej. main): {Colors.ENDC}").strip() or "main"
+
+    deployer = None
+    try:
+        deployer = SSHDeployer(args.host, TARGET_USER, password)
+        deployer.connect()
+
+        # --- PASO 1: Preparación del Sistema ---
+        print_step("Paso 1: Actualizando el sistema e instalando dependencias...")
+        env = "DEBIAN_FRONTEND=noninteractive"
+        deployer.execute(f"{env} apt-get update", use_sudo=True)
+        deployer.execute(f"{env} apt-get upgrade -y", use_sudo=True)
+        deployer.execute(f"{env} apt-get install -y git python3-pip python3-venv can-utils", use_sudo=True)
+        print_ok("Sistema preparado.")
+
+        # --- PASO 2: Creación de Directorios ---
+        print_step(f"Paso 2: Asegurando la existencia de los directorios de trabajo...")
+        deployer.execute(f"mkdir -p {LOG_DIR} {DATA_DIR} {APP_DIR}")
+        print_ok("Directorios creados.")
+        
+        # --- PASO 3: Configuración de la Deploy Key ---
+        print_step("Paso 3: Configurando Deploy Key...")
+        key_path = f"/home/{TARGET_USER}/.ssh/id_ed25519"
+        pub_key_path = f"{key_path}.pub"
+        
+        deployer.execute(f"mkdir -p /home/{TARGET_USER}/.ssh")
+        deployer.execute(f"chmod 700 /home/{TARGET_USER}/.ssh")
+
+        key_exists_cmd = f"[ -f {pub_key_path} ] && echo 'exists' || echo 'not exists'"
+        key_status = deployer.execute(key_exists_cmd)
+        
+        if 'not exists' in key_status:
+            print_info("No se encontró una clave SSH existente. Generando una nueva...")
+            deployer.execute(f"ssh-keygen -t ed25519 -f {key_path} -N '' -C 'fire-truck-app-deploy-key'")
+            public_key = deployer.execute(f"cat {pub_key_path}")
+            
+            print(f"\n{Colors.WARNING}--- ACCIÓN MANUAL REQUERIDA ---{Colors.ENDC}")
+            print(f"Se ha generado una nueva clave pública. Cópiala y añádela como 'Deploy Key' en tu repositorio Git.")
+            print(f"Asegúrate de NO marcar 'Allow write access'.")
+            print(f"{Colors.OKCYAN}{public_key}{Colors.ENDC}")
+            input("\nPresiona Enter cuando hayas añadido la clave para continuar...")
+        else:
+            print_info("Se ha encontrado una clave SSH existente.")
+            public_key = deployer.execute(f"cat {pub_key_path}")
+            print(f"Asegúrate de que esta clave pública está configurada como 'Deploy Key' en tu repositorio Git:")
+            print(f"{Colors.OKCYAN}{public_key}{Colors.ENDC}")
+        
+        git_host = repo_url.split('@')[1].split(':')[0]
+        deployer.execute(f"ssh-keyscan {git_host} >> /home/{TARGET_USER}/.ssh/known_hosts", ignore_errors=True)
+        deployer.execute(f"sort -u /home/{TARGET_USER}/.ssh/known_hosts -o /home/{TARGET_USER}/.ssh/known_hosts")
+        print_ok("Deploy Key configurada y verificada.")
+
+        # --- PASO 4: Clonar/Forzar Actualización del Repositorio ---
+        print_step("Paso 4: Clonando o forzando la actualización del repositorio...")
+        repo_check_cmd = f"[ -d {APP_DIR}/.git ] && echo 'exists' || echo 'not exists'"
+        repo_status = deployer.execute(repo_check_cmd)
+
+        if 'exists' in repo_status:
+            print_info("El repositorio ya existe. Forzando actualización desde el origen...")
+            force_update_cmds = f"cd {APP_DIR} && git fetch --all && git reset --hard origin/{git_branch} && git clean -fdx"
+            deployer.execute(force_update_cmds)
+        else:
+            print_info("Clonando el repositorio...")
+            deployer.execute(f"git clone --branch {git_branch} {repo_url} {APP_DIR}")
+
+        print_info("Configurando el entorno virtual de Python...")
+        deployer.execute(f"python3 -m venv {APP_DIR}/.venv")
+        deployer.execute(f"{APP_DIR}/.venv/bin/pip install -r {APP_DIR}/requirements.txt")
+        print_ok("Repositorio y dependencias listos.")
+        
+        # --- PASO 5: Configuración de Permisos ---
+        print_step("Paso 5: Configurando permisos de hardware y sudo...")
+        deployer.execute(f"chmod +x {APP_DIR}/scripts/check_and_install_update.sh", ignore_errors=True) # Script puede no existir
+        deployer.execute(f"usermod -a -G gpio,i2c,dialout {TARGET_USER}", use_sudo=True)
+        
+        sudo_rule = f'{TARGET_USER} ALL=(ALL) NOPASSWD: /sbin/shutdown, /sbin/reboot'
+        deployer.execute(f"echo '{sudo_rule}' | sudo tee /etc/sudoers.d/99-fire-truck-app > /dev/null")
+        deployer.execute(f"chmod 0440 /etc/sudoers.d/99-fire-truck-app", use_sudo=True)
+        print_ok("Permisos configurados.")
+
+        # --- PASO 6: Configuración del Bus CAN ---
+        print_step("Paso 6: Configurando bus CAN en /boot/firmware/config.txt")
+        can_config = "\\n# Habilitar CAN bus (fire-truck-app)\\ndtparam=spi=on\\ndtoverlay=mcp2515-can0,oscillator=16000000,interrupt=25"
+        check_can_cmd = "grep -q 'mcp2515-can0' /boot/firmware/config.txt"
+        
+        try:
+            # Usamos sudo aquí porque /boot/firmware/config.txt puede tener permisos restringidos
+            deployer.execute(check_can_cmd, use_sudo=True)
+            print_info("La configuración del bus CAN ya parece existir. Omitiendo.")
+        except Exception:
+             print_info("Añadiendo configuración del bus CAN a /boot/firmware/config.txt...")
+             deployer.execute(f'printf "{can_config}" | sudo tee -a /boot/firmware/config.txt > /dev/null')
+             print_ok("Bus CAN configurado.")
+        
+        # --- PASO 7: Instalación de los Servicios systemd ---
+        print_step("Paso 7: Instalando servicios systemd...")
+        local_service_dir = "services"
+        if not os.path.isdir(local_service_dir):
+            raise FileNotFoundError(f"El directorio '{local_service_dir}' no se encuentra al lado del script.")
+        
+        for service_file in ["app.service", "updater.service"]:
+            local_path = os.path.join(local_service_dir, service_file)
+            remote_tmp_path = f"/tmp/{service_file}"
+            deployer.upload_file(local_path, remote_tmp_path)
+            deployer.execute(f"mv {remote_tmp_path} /etc/systemd/system/", use_sudo=True)
+            
+        deployer.execute("systemctl daemon-reload", use_sudo=True)
+        deployer.execute("systemctl enable updater.service", use_sudo=True)
+        deployer.execute("systemctl enable app.service", use_sudo=True)
+        print_ok("Servicios instalados y habilitados.")
+        
+        # --- Finalización ---
+        print_step("¡Despliegue completado!")
+        print_warn("Es necesario reiniciar el sistema para aplicar todos los cambios.")
+        reboot_choice = input("¿Deseas reiniciar la Raspberry Pi ahora? (s/n): ").lower()
+        if reboot_choice == 's':
+            print_info("Reiniciando el dispositivo...")
+            deployer.execute("reboot", use_sudo=True, ignore_errors=True) # Ignorar error si la conexión se corta antes de la respuesta
+            time.sleep(2) 
+        else:
+            print_info("No se reiniciará. Recuerda hacerlo manualmente con 'sudo reboot'.")
+
+    except Exception as e:
+        print_fail(f"\nEl proceso de despliegue ha fallado: {e}")
+        sys.exit(1)
+    finally:
+        if deployer:
+            deployer.disconnect()
+
+if __name__ == "__main__":
+    main()
+```
+
+## Archivo: `.\generar_markdown_auto.py`
+
+```python
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+import os
+
+# --- CONFIGURACIÓN ---
+# Nombre del archivo Markdown que se generará
+OUTPUT_FILENAME = "codigo_completo.md"
+
+# Extensiones de los archivos que queremos buscar
+TARGET_EXTENSIONS = ('.py', '.service', '.txt', '.csv', '.dbc', '.sh', '.json', '.yaml', '.yml', '.html.j2', '.sh')
+
+# Lista de carpetas raíz que quieres escanear (búsqueda recursiva).
+# Usa '.' para escanear todo desde la carpeta actual.
+TARGET_DIRECTORIES = [
+    '.' 
+]
+
+# ¡NUEVO! Lista de carpetas que quieres EXCLUIR de la búsqueda.
+# El script ignorará por completo estas carpetas y todo su contenido.
+# Es ideal para carpetas de entornos virtuales, repositorios git, cachés, etc.
+EXCLUDED_DIRECTORIES = [
+    './.venv',          # Entorno virtual de Python
+    './venv',           # Otro nombre común para entorno virtual
+    './.git',           # Carpeta del repositorio Git
+    './__pycache__',    # Carpetas de caché de Python
+    './node_modules'    # Carpeta de dependencias de Node.js
+]
+# ---------------
+
+def get_markdown_language(filename):
+    """Devuelve el identificador de lenguaje para el bloque de código Markdown."""
+    if filename.endswith('.py'):
+        return 'python'
+    if filename.endswith('.service'):
+        return 'ini'
+    return 'text'
+
+def main():
+    """
+    Función principal que busca archivos, respetando las exclusiones, y escribe el Markdown.
+    """
+    try:
+        # Normalizamos las rutas de exclusión para una comparación más fiable
+        # os.path.normpath elimina './' y convierte '/' a '\' en Windows, etc.
+        normalized_excluded_dirs = [os.path.normpath(d) for d in EXCLUDED_DIRECTORIES]
+
+        with open(OUTPUT_FILENAME, 'w', encoding='utf-8') as md_file:
+            print(f"Generando el archivo: {OUTPUT_FILENAME}")
+            print(f"Carpetas a escanear: {', '.join(TARGET_DIRECTORIES)}")
+            print(f"Carpetas a excluir: {', '.join(EXCLUDED_DIRECTORIES)}")
+            print(f"Extensiones buscadas: {', '.join(TARGET_EXTENSIONS)}\n")
+            
+            found_files = False
+            for target_dir in TARGET_DIRECTORIES:
+                if not os.path.isdir(target_dir):
+                    print(f"¡Atención! La carpeta de inicio '{target_dir}' no existe y será omitida.")
+                    continue
+
+                for root, dirs, files in os.walk(target_dir, topdown=True):
+                    # --- LÓGICA DE EXCLUSIÓN ---
+                    # Modificamos la lista 'dirs' en el momento para que os.walk
+                    # no entre en los directorios excluidos. Es la forma más eficiente.
+                    dirs[:] = [d for d in dirs if os.path.normpath(os.path.join(root, d)) not in normalized_excluded_dirs]
+                    
+                    for filename in files:
+                        if filename.endswith(TARGET_EXTENSIONS):
+                            full_path = os.path.join(root, filename)
+                            found_files = True
+                            
+                            print(f"  -> Añadiendo {full_path}...")
+                            
+                            md_file.write(f"## Archivo: `{full_path}`\n\n")
+                            lang = get_markdown_language(filename)
+                            md_file.write(f"```{lang}\n")
+
+                            try:
+                                with open(full_path, 'r', encoding='utf-8', errors='ignore') as src_file:
+                                    content = src_file.read()
+                                    md_file.write(content)
+                            except Exception as e:
+                                error_message = f"Error al leer el archivo: {e}"
+                                md_file.write(error_message)
+                                print(f"  -> ¡Error! No se pudo leer el archivo {full_path}: {e}")
+
+                            md_file.write("\n```\n\n")
+            
+            if not found_files:
+                 print("\nNo se encontraron archivos con las extensiones especificadas en las carpetas de destino (después de aplicar exclusiones).")
+            
+            print(f"\n¡Proceso completado! El archivo '{OUTPUT_FILENAME}' ha sido generado.")
+
+    except IOError as e:
+        print(f"Error: No se pudo crear o escribir en el archivo de salida '{OUTPUT_FILENAME}'.")
+        print(f"Detalle del error: {e}")
+
+if __name__ == "__main__":
+    main()
+```
+
 ## Archivo: `.\main.py`
 
 ```python
@@ -164,10 +546,10 @@ ftp:
   port: 21
   user: "doback"
   pass: "***REMOVED***"
-  # Intervalo para buscar y subir archivos de log completos.
-  upload_interval_sec: 300
+  # Intervalo para buscar y subir archivos de log completos de días anteriores.
+  log_upload_interval_sec: 300
   # Intervalo para subir los archivos de estado en tiempo real.
-  realtime_interval_sec: 30
+  realtime_upload_interval_sec: 30
   # Los archivos no se subirán si se han modificado en los últimos X segundos.
   upload_safety_margin_sec: 120
 
@@ -1593,10 +1975,9 @@ log = logging.getLogger(__name__)
 
 class FTPTransmitter(threading.Thread):
     """
-    Gestiona la subida de archivos al servidor FTP.
-    - Periódicamente, escanea el directorio de datos.
-    - Sube los archivos de log de días anteriores (.log).
-    - Sube siempre los archivos de estado en tiempo real (_RealTime.txt).
+    Gestiona la subida de archivos al servidor FTP con intervalos separados.
+    - Sube archivos de log de días anteriores (.log) periódicamente.
+    - Sube archivos de estado en tiempo real (_RealTime.txt) con mayor frecuencia.
     """
 
     def __init__(self, config: dict, shutdown_event: threading.Event, session_manager):
@@ -1606,25 +1987,38 @@ class FTPTransmitter(threading.Thread):
         self.shutdown_event = shutdown_event
         self.session_manager = session_manager
         
-        self.scan_interval = self.ftp_config.get('upload_interval_sec', 300)
+        self.log_scan_interval = self.ftp_config.get('log_upload_interval_sec', 300)
+        self.realtime_scan_interval = self.ftp_config.get('realtime_upload_interval_sec', 30)
 
     def run(self):
-        log.info("Iniciando transmisor FTP.")
+        log.info(f"Iniciando transmisor FTP. Logs cada {self.log_scan_interval}s, RealTime cada {self.realtime_scan_interval}s.")
         
-        # Realizar un primer ciclo de subida inmediatamente al arrancar.
-        log.info("Realizando ciclo de subida inicial...")
-        self._perform_upload_cycle()
+        # Ejecutar un ciclo de subida completo al arrancar
+        log.info("Realizando ciclo de subida inicial completo (logs y tiempo real)...")
+        self._perform_log_upload_cycle()
+        self._perform_realtime_upload_cycle()
         log.info("Ciclo de subida inicial completado.")
         
+        last_log_scan_time = time.time()
+        last_realtime_scan_time = time.time()
+
         while not self.shutdown_event.is_set():
-            # Esperar para el próximo ciclo de escaneo completo.
-            self.shutdown_event.wait(self.scan_interval)
+            current_time = time.time()
 
-            if self.shutdown_event.is_set():
-                break
+            # Comprobar si es momento de subir logs históricos
+            if current_time - last_log_scan_time >= self.log_scan_interval:
+                log.info("Iniciando ciclo de subida de archivos de log...")
+                self._perform_log_upload_cycle()
+                last_log_scan_time = current_time
 
-            log.info("Iniciando ciclo de subida periódico...")
-            self._perform_upload_cycle()
+            # Comprobar si es momento de subir archivos de tiempo real
+            if current_time - last_realtime_scan_time >= self.realtime_scan_interval:
+                log.info("Iniciando ciclo de subida de archivos de tiempo real...")
+                self._perform_realtime_upload_cycle()
+                last_realtime_scan_time = current_time
+            
+            # Esperar un poco para no consumir CPU
+            self.shutdown_event.wait(1)
 
         log.info("Transmisor FTP detenido.")
 
@@ -1634,10 +2028,8 @@ class FTPTransmitter(threading.Thread):
             ftp = ftplib.FTP()
             ftp.connect(self.ftp_config['host'], self.ftp_config['port'], timeout=20)
             ftp.login(self.ftp_config['user'], self.ftp_config['pass'])
-            # Entrar en el directorio base de datos_doback
             base_remote_dir = "datos_doback"
             if base_remote_dir not in ftp.nlst():
-                log.info(f"Creando directorio remoto base: {base_remote_dir}")
                 ftp.mkd(base_remote_dir)
             ftp.cwd(base_remote_dir)
             log.debug("Conexión FTP establecida y en directorio 'datos_doback'.")
@@ -1646,18 +2038,11 @@ class FTPTransmitter(threading.Thread):
             log.error(f"Error de conexión FTP: {e}")
             return None
 
-    def _perform_upload_cycle(self):
-        """
-        Escanea todos los directorios de datos y sube los archivos pertinentes.
-        - Archivos .log de días pasados.
-        - Archivos _RealTime.txt siempre.
-        """
-        log.info("Iniciando nuevo ciclo de escaneo para subida FTP...")
+    def _scan_and_upload(self, file_filter: callable):
+        """Función genérica para escanear y subir archivos que cumplan un criterio."""
         data_root = self.paths_config.get('data_root')
-        today_str = datetime.now().strftime('%Y%m%d')
-
         if not os.path.isdir(data_root):
-            log.warning(f"El directorio raíz de datos '{data_root}' no existe. No hay nada que subir.")
+            log.warning(f"El directorio raíz '{data_root}' no existe. No hay nada que subir.")
             return
 
         ftp = self._connect_ftp()
@@ -1666,61 +2051,66 @@ class FTPTransmitter(threading.Thread):
             return
 
         try:
-            # Iterar sobre los directorios de tipo de dato (CAN, GPS, etc.)
             for data_type_dir in os.listdir(data_root):
                 local_type_path = os.path.join(data_root, data_type_dir)
                 if not os.path.isdir(local_type_path):
                     continue
 
-                # Iterar sobre los archivos dentro de cada directorio de tipo
                 for filename in os.listdir(local_type_path):
                     if self.shutdown_event.is_set():
-                        log.warning("Señal de apagado recibida durante el ciclo de subida. Abortando.")
+                        log.warning("Señal de apagado recibida, abortando ciclo de subida.")
                         return
 
-                    local_file_path = os.path.join(local_type_path, filename)
-                    
-                    upload = False
-                    if filename.endswith("_RealTime.txt"):
-                        upload = True
-                    elif filename.endswith(".log"):
-                        # Extraer la fecha del nombre del archivo
-                        try:
-                            file_date_str = filename.split('_')[-1].split('.')[0]
-                            if file_date_str < today_str:
-                                upload = True
-                        except IndexError:
-                            log.warning(f"No se pudo extraer la fecha del nombre de archivo: {filename}. Omitiendo.")
-                    
-                    if upload:
+                    if file_filter(filename):
+                        local_file_path = os.path.join(local_type_path, filename)
                         self._upload_file(ftp, local_file_path)
 
         except Exception as e:
             log.error(f"Error inesperado durante el ciclo de subida FTP: {e}", exc_info=True)
         finally:
-            ftp.quit()
+            if ftp:
+                ftp.quit()
+
+    def _perform_log_upload_cycle(self):
+        """Escanea y sube solo los archivos de log de días anteriores."""
+        today_str = datetime.now().strftime('%Y%m%d')
+        
+        def log_filter(filename):
+            if not filename.endswith(".log"):
+                return False
+            try:
+                file_date_str = filename.split('_')[-1].split('.')[0]
+                return file_date_str < today_str
+            except IndexError:
+                log.warning(f"No se pudo extraer fecha de '{filename}'. Omitiendo.")
+                return False
+        
+        self._scan_and_upload(log_filter)
+
+    def _perform_realtime_upload_cycle(self):
+        """Escanea y sube solo los archivos _RealTime.txt."""
+        self._scan_and_upload(lambda filename: filename.endswith("_RealTime.txt"))
 
     def _upload_file(self, ftp, local_path: str) -> bool:
         """
         Sube un único archivo al servidor FTP, creando la estructura de directorios
-        remota: DOBACKXXX/TIPO_DATO/archivo.
+        remota en minúsculas: datos_doback/dobackXXX/tipo_dato/archivo.
         """
         try:
             filename = os.path.basename(local_path)
-            # Ej: 'CAN' o 'ESTABILIDAD'
-            data_type_name = os.path.basename(os.path.dirname(local_path))
-            device_name = self.session_manager.device_name # Ej: 'DOBACK001'
+            # Ej: 'CAN' o 'ESTABILIDAD' -> convertido a 'can', 'estabilidad'
+            data_type_name = os.path.basename(os.path.dirname(local_path)).lower()
+            # Ej: 'DOBACK001' -> convertido a 'doback001'
+            device_name = self.session_manager.device_name.lower()
 
             # --- Navegar o crear directorios remotos ---
-            # Estamos en 'datos_doback/', ahora creamos 'DOBACKXXX/'
+            # Estamos en 'datos_doback/', ahora creamos 'dobackXXX/'
             if device_name not in ftp.nlst():
-                log.info(f"Creando directorio remoto de dispositivo: {device_name}")
                 ftp.mkd(device_name)
             ftp.cwd(device_name)
             
-            # Ahora creamos 'TIPO_DATO/'
+            # Ahora creamos 'tipo_dato/'
             if data_type_name not in ftp.nlst():
-                log.info(f"Creando directorio remoto de tipo de dato: {data_type_name}")
                 ftp.mkd(data_type_name)
             ftp.cwd(data_type_name)
 
@@ -1729,15 +2119,13 @@ class FTPTransmitter(threading.Thread):
                 ftp.storbinary(f'STOR {filename}', f)
             
             # Volver al directorio base 'datos_doback' para el siguiente archivo
-            ftp.cwd('../..') # Salir de TIPO_DATO y de DOBACKXXX
+            ftp.cwd('/datos_doback')
             return True
             
         except ftplib.all_errors as e:
             log.error(f"Error de FTP al subir el archivo {local_path}: {e}")
             try:
-                # Intentar volver a la raíz en caso de error para no afectar a la siguiente subida
-                ftp.cwd('/')
-                ftp.cwd('datos_doback')
+                ftp.cwd('/datos_doback')
             except ftplib.all_errors:
                 log.error("No se pudo volver al directorio FTP base después de un error.")
             return False
