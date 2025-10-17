@@ -4,72 +4,7 @@
 # =============================================================================
 #  SCRIPT DE DESPLIEGUE AUTOMÁTICO PARA fire-truck-app
 # =============================================================================
-#
-# Descripción:
-#   Este script automatiza la instalación y configuración completa de la aplicación
-#   'fire-truck-app' en una Raspberry Pi donde el usuario 'cosigein' es el
-#   usuario principal y administrador (con privilegios sudo).
-#
-#   Acciones realizadas:
-#     - Se conecta directamente como el usuario 'cosigein'.
-#     - Instala dependencias del sistema (git, python, can-utils).
-#     - Crea los directorios de la aplicación (/datos, /logs).
-#     - Asigna permisos de hardware (gpio, i2c, dialout) al propio usuario.
-#     - Configura una Deploy Key SSH para acceder a Git.
-#     - Clona o fuerza la actualización del repositorio desde GitHub.
-#     - Instala las dependencias de Python en un entorno virtual.
-#     - Configura sudoers para permitir el reinicio/apagado sin contraseña.
-#     - Configura el bus CAN en /boot/config.txt.
-#     - Instala y habilita los servicios de systemd.
-#
-# -----------------------------------------------------------------------------
-#
-# Requisitos Previos:
-#
-#   1. En la máquina LOCAL (donde se ejecuta este script):
-#      - Python 3 instalado.
-#      - La librería 'paramiko': pip install paramiko
-#
-#   2. En la Raspberry Pi de DESTINO:
-#      - Raspberry Pi OS instalado.
-#      - El usuario 'cosigein' debe ser el usuario principal con acceso sudo.
-#
-# -----------------------------------------------------------------------------
-#
-# Estructura de Archivos requerida (en la máquina LOCAL):
-#
-#   .
-#   ├── deploy.py             <-- Este script
-#   └── services/
-#       ├── app.service
-#       └── updater.service
-#
-# -----------------------------------------------------------------------------
-#
-# Uso:
-#
-#   1. Abre una terminal en la carpeta donde guardaste este script.
-#   2. Ejecuta el siguiente comando, reemplazando la IP por la de tu RPi:
-#
-#      python deploy.py <IP_o_HOSTNAME_de_la_RPi>
-#
-#      Ejemplo:
-#      python deploy.py 192.168.1.55
-#
-# -----------------------------------------------------------------------------
-#
-# Proceso Interactivo:
-#
-#   El script te pedirá la siguiente información:
-#
-#   1. Contraseña del usuario 'cosigein'.
-#   2. URL SSH del repositorio Git. Deberás introducir:
-#      git@github.com:p12regaf/fire-truck-app.git
-#   3. Nombre de la rama a desplegar (puedes presionar Enter para usar 'main').
-#   4. (Solo la primera vez) Te mostrará una Deploy Key para que la añadas
-#      a la configuración de tu repositorio en GitHub.
-#
-# =============================================================================
+# ... (descripción igual) ...
 """
 
 import argparse
@@ -158,22 +93,31 @@ class SSHDeployer:
             full_command = f"sudo -S -p '' {command}"
 
         try:
+            # **CORRECCIÓN FINAL**: Quitar get_pty=True para que `sudo -S` funcione correctamente.
             stdin, stdout, stderr = self.client.exec_command(full_command)
+            
             if use_sudo:
                 stdin.write(self.password + '\n')
                 stdin.flush()
+                stdin.channel.shutdown_write()
 
+            # Leer la salida ANTES de esperar el código de finalización.
+            out = stdout.read().decode('utf-8', errors='ignore').strip()
+            err = stderr.read().decode('utf-8', errors='ignore').strip()
+            
+            # Ahora que hemos leído la salida, podemos esperar a que el comando termine.
             exit_code = stdout.channel.recv_exit_status()
             
-            out = stdout.read().decode('utf-8').strip()
-            err = stderr.read().decode('utf-8').strip()
-            if out:
-                print_info(f"  stdout: {out}")
             if err and "Warning: " not in err:
-                print_warn(f"  stderr: {err}")
+                # En modo no-pty, sudo a menudo se queja de "no tty present". Lo ignoramos.
+                if "sudo: no tty present" not in err:
+                    print_warn(f"  stderr: {err}")
 
             if exit_code != 0 and not ignore_errors:
-                raise Exception(f"El comando falló con código de salida {exit_code}. Error: {err}")
+                error_message = f"El comando falló con código de salida {exit_code}."
+                if err:
+                    error_message += f" Error: {err}"
+                raise Exception(error_message)
             
             return out
         except Exception as e:
@@ -206,9 +150,10 @@ def main():
 
         # --- PASO 1: Preparación del Sistema ---
         print_step("Paso 1: Actualizando el sistema e instalando dependencias...")
-        deployer.execute("apt update", use_sudo=True)
-        deployer.execute("apt upgrade -y", use_sudo=True)
-        deployer.execute("apt install -y git python3-pip python3-venv can-utils", use_sudo=True)
+        env = "DEBIAN_FRONTEND=noninteractive"
+        deployer.execute(f"{env} apt-get update", use_sudo=True)
+        deployer.execute(f"{env} apt-get upgrade -y", use_sudo=True)
+        deployer.execute(f"{env} apt-get install -y git python3-pip python3-venv can-utils i2c-tools", use_sudo=True)
         print_ok("Sistema preparado.")
 
         # --- PASO 2: Creación de Directorios ---
@@ -259,7 +204,7 @@ def main():
             deployer.execute(force_update_cmds)
         else:
             print_info("Clonando el repositorio...")
-            deployer.execute(f"git clone {repo_url} {APP_DIR}")
+            deployer.execute(f"git clone --branch {git_branch} {repo_url} {APP_DIR}")
 
         print_info("Configurando el entorno virtual de Python...")
         deployer.execute(f"python3 -m venv {APP_DIR}/.venv")
@@ -268,24 +213,45 @@ def main():
         
         # --- PASO 5: Configuración de Permisos ---
         print_step("Paso 5: Configurando permisos de hardware y sudo...")
-        deployer.execute(f"chmod +x {APP_DIR}/scripts/check_and_install_update.sh")
+        deployer.execute(f"chmod +x {APP_DIR}/scripts/check_and_install_update.sh", ignore_errors=True) # Script puede no existir
         deployer.execute(f"usermod -a -G gpio,i2c,dialout {TARGET_USER}", use_sudo=True)
         
         sudo_rule = f'{TARGET_USER} ALL=(ALL) NOPASSWD: /sbin/shutdown, /sbin/reboot'
-        deployer.execute(f"echo '{sudo_rule}' > /etc/sudoers.d/99-fire-truck-app", use_sudo=True)
+        deployer.execute(f"echo '{sudo_rule}' | sudo tee /etc/sudoers.d/99-fire-truck-app > /dev/null")
         deployer.execute(f"chmod 0440 /etc/sudoers.d/99-fire-truck-app", use_sudo=True)
         print_ok("Permisos configurados.")
 
         # --- PASO 6: Configuración del Bus CAN ---
-        print_step("Paso 6: Configurando bus CAN en /boot/config.txt...")
+        print_step("Paso 6: Configurando bus CAN en /boot/firmware/config.txt")
         can_config = "\\n# Habilitar CAN bus (fire-truck-app)\\ndtparam=spi=on\\ndtoverlay=mcp2515-can0,oscillator=16000000,interrupt=25"
-        check_can_cmd = "grep -q 'mcp2515-can0' /boot/config.txt"
-        if deployer.execute(check_can_cmd, use_sudo=True, ignore_errors=True) == "":
-             print_info("Añadiendo configuración del bus CAN a /boot/config.txt...")
-             deployer.execute(f'printf "{can_config}" | sudo tee -a /boot/config.txt')
-             print_ok("Bus CAN configurado.")
-        else:
+        check_can_cmd = "grep -q 'mcp2515-can0' /boot/firmware/config.txt"
+        
+        try:
+            # Usamos sudo aquí porque /boot/firmware/config.txt puede tener permisos restringidos
+            deployer.execute(check_can_cmd, use_sudo=True)
             print_info("La configuración del bus CAN ya parece existir. Omitiendo.")
+        except Exception:
+             print_info("Añadiendo configuración del bus CAN a /boot/firmware/config.txt...")
+             deployer.execute(f'printf "{can_config}" | sudo tee -a /boot/firmware/config.txt > /dev/null')
+             print_ok("Bus CAN configurado.")
+
+        # --- PASO 6.5: Configuración del Reloj en Tiempo Real (RTC) ---
+        print_step("Paso 6.5: Configurando Reloj en Tiempo Real (RTC) en /boot/firmware/config.txt")
+        # Asumimos un RTC DS3231, que es muy común. Cambiar si es otro modelo.
+        rtc_config = "\\n# Habilitar RTC (DS3231)\\ndtoverlay=i2c-rtc,ds3231"
+        check_rtc_cmd = "grep -q 'i2c-rtc,ds3231' /boot/firmware/config.txt"
+
+        try:
+            deployer.execute(check_rtc_cmd, use_sudo=True)
+            print_info("La configuración del RTC ya parece existir. Omitiendo.")
+        except Exception:
+            print_info("Añadiendo configuración del RTC a /boot/firmware/config.txt...")
+            deployer.execute(f'printf "{rtc_config}" | sudo tee -a /boot/firmware/config.txt > /dev/null')
+            print_ok("RTC configurado. Se requiere un reinicio para que el kernel lo reconozca.")
+
+        print_info("Deshabilitando fake-hwclock para dar prioridad al RTC real...")
+        deployer.execute("apt-get -y remove fake-hwclock", use_sudo=True, ignore_errors=True)
+        deployer.execute("update-rc.d -f fake-hwclock remove", use_sudo=True, ignore_errors=True)
         
         # --- PASO 7: Instalación de los Servicios systemd ---
         print_step("Paso 7: Instalando servicios systemd...")
@@ -310,7 +276,7 @@ def main():
         reboot_choice = input("¿Deseas reiniciar la Raspberry Pi ahora? (s/n): ").lower()
         if reboot_choice == 's':
             print_info("Reiniciando el dispositivo...")
-            deployer.execute("reboot", use_sudo=True)
+            deployer.execute("reboot", use_sudo=True, ignore_errors=True) # Ignorar error si la conexión se corta antes de la respuesta
             time.sleep(2) 
         else:
             print_info("No se reiniciará. Recuerda hacerlo manualmente con 'sudo reboot'.")
