@@ -3,3 +3,4 @@ python-can
 pyserial
 RPi.GPIO
 smbus2
+sparkfun-ublox-gnss

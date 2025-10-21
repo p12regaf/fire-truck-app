@@ -4,7 +4,6 @@
 # =============================================================================
 #  SCRIPT DE DESPLIEGUE AUTOMÁTICO PARA fire-truck-app
 # =============================================================================
-# ... (descripción igual) ...
 """
 
 import argparse
@@ -90,26 +89,35 @@ class SSHDeployer:
         full_command = command
         
         if use_sudo:
+            # -S lee la contraseña de stdin, -p '' evita que sudo muestre su propio prompt.
             full_command = f"sudo -S -p '' {command}"
 
         try:
-            # **CORRECCIÓN FINAL**: Quitar get_pty=True para que `sudo -S` funcione correctamente.
-            stdin, stdout, stderr = self.client.exec_command(full_command)
+            # No usamos get_pty=True para que `sudo -S` funcione de manera fiable.
+            stdin, stdout, stderr = self.client.exec_command(full_command, timeout=300) # Añadimos un timeout largo (5 min)
             
             if use_sudo:
                 stdin.write(self.password + '\n')
                 stdin.flush()
+                # Cerramos el canal de entrada después de enviar la contraseña.
+                # Esto es crucial para que el proceso remoto sepa que no hay más input.
                 stdin.channel.shutdown_write()
 
-            # Leer la salida ANTES de esperar el código de finalización.
+            # Leer la salida ANTES de esperar el código de finalización para evitar bloqueos.
             out = stdout.read().decode('utf-8', errors='ignore').strip()
             err = stderr.read().decode('utf-8', errors='ignore').strip()
             
             # Ahora que hemos leído la salida, podemos esperar a que el comando termine.
             exit_code = stdout.channel.recv_exit_status()
             
+            # Imprimir salida estándar si la hay (útil para depuración)
+            if out:
+                # Opcional: imprimir la salida para ver qué está pasando.
+                # Puede ser mucho texto para `apt-get update`, así que puedes comentarlo si quieres.
+                print_info(f"  stdout: {out}")
+
+            # Imprimir errores, ignorando advertencias comunes de sudo sin tty.
             if err and "Warning: " not in err:
-                # En modo no-pty, sudo a menudo se queja de "no tty present". Lo ignoramos.
                 if "sudo: no tty present" not in err:
                     print_warn(f"  stderr: {err}")
 
