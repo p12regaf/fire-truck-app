@@ -142,3 +142,4 @@ class GPSAcquirer(BaseAcquirer):
         if self.bus:
             self.bus.close()
             log.info("Bus I2C para GPS cerrado.")
+            
