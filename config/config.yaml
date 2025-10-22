@@ -76,14 +76,6 @@ data_sources:
       - name: "Wheel-Based Vehicle Speed"
         pgn: 65265  # 0xFEF1
         unit: "km/h"
-        
-      - name: "Engine Coolant Temperature"
-        pgn: 65262  # 0xFEEE
-        unit: "°C"
-        
-      - name: "Accelerator Pedal Position 1"
-        pgn: 61443 # 0xF003
-        unit: "%"
 
   gps:
     enabled: true
