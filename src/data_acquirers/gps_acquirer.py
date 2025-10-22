@@ -65,9 +65,10 @@ class GPSAcquirer(BaseAcquirer):
                 return None
                 
             fix = campos[6]
+            # ### CAMBIO 1: Si no hay fix, en lugar de retornar None, retornamos un diccionario de estado.
             if fix == '0' or not campos[2] or not campos[4]:
-                log.info("Trama GGA recibida, pero sin fix de GPS.")
-                return None
+                log.info("Trama GGA recibida, pero sin fix de GPS. Se registrará el estado.")
+                return {"status": "No Fix"}
 
             lat_decimal = self._convert_lat_lon(campos[2], campos[3])
             lon_decimal = self._convert_lat_lon(campos[4], campos[5])
@@ -75,7 +76,9 @@ class GPSAcquirer(BaseAcquirer):
             if lat_decimal is None or lon_decimal is None:
                 return None
 
+            # ### CAMBIO 2: Añadimos 'status' para indicar que los datos son válidos.
             return {
+                "status": "Valid",
                 "latitude": f"{lat_decimal:.6f}",
                 "longitude": f"{lon_decimal:.6f}",
                 "altitude_m": campos[9] if campos[9] else "N/A",
@@ -89,30 +92,20 @@ class GPSAcquirer(BaseAcquirer):
             return None
 
     def _acquire_data(self):
-        """
-        Lee datos del bus I2C byte a byte, que es más robusto para un flujo de stream NMEA,
-        y los procesa cuando encuentra un salto de línea.
-        """
         try:
-            # === CAMBIO CLAVE: Leer byte a byte ===
-            # Intentamos leer hasta 32 bytes en este ciclo para no bloquear el hilo,
-            # pero lo hacemos de uno en uno para manejar el stream correctamente.
             bytes_read_count = 0
             for _ in range(32):
                 byte = self.bus.read_byte(self.i2c_addr)
-                # El carácter de fin de línea en NMEA es 10 (\n). El retorno de carro es 13 (\r).
-                # Nos interesa el \n para separar las líneas. Ignoramos el \r (13).
-                if byte == 13: # Ignorar retorno de carro
+                if byte == 13: 
                     continue
                 self._buffer.append(byte)
                 bytes_read_count += 1
 
         except IOError:
-            # Si no hay más bytes que leer (IOError), es el momento de procesar lo que tenemos.
             pass
         except Exception as e:
             log.error(f"Error inesperado leyendo del GPS: {e}")
-            self.shutdown_event.wait(1.0) # Esperar un poco antes de reintentar
+            self.shutdown_event.wait(1.0)
             return
 
         if len(self._buffer) > self.MAX_BUFFER_SIZE:
@@ -126,7 +119,7 @@ class GPSAcquirer(BaseAcquirer):
             if not line_str:
                 continue
 
-            if '$' in line_str: # Asegurarnos de que es una trama NMEA
+            if '$' in line_str:
                 if 'RMC' in line_str:
                     self._parse_gnrmc(line_str)
                 elif 'GGA' in line_str:
@@ -135,9 +128,12 @@ class GPSAcquirer(BaseAcquirer):
                     if parsed_data:
                         packet = self._create_data_packet("gps", parsed_data)
                         self.data_queue.put(packet)
-                        log.debug(f"Paquete GPS (NMEA) válido procesado: {parsed_data}")
+                        # ### CAMBIO 3: Actualizamos el mensaje de log para ser más claro.
+                        if parsed_data.get("status") == "Valid":
+                            log.debug(f"Paquete GPS (NMEA) válido procesado: {parsed_data}")
+                        else:
+                            log.debug(f"Paquete GPS (NMEA) sin fix procesado: {parsed_data}")
         
-        # Pequeña pausa para no consumir 100% de CPU si el GPS envía datos muy rápido.
         self.shutdown_event.wait(0.05)
 
 
