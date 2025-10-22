@@ -7,8 +7,9 @@ system:
   log_level: "DEBUG"       # DEBUG, INFO, WARNING, ERROR, CRITICAL
   start_with_gui: false 
 
+# TODO: Habilitar monitores.
   power_monitor:
-    enabled: true
+    enabled: false
     # Pin GPIO (en modo BCM) conectado a la alimentación del vehículo.
     # El pin 36 (BOARD) es el 16 (BCM).
     pin: 16 
@@ -17,14 +18,14 @@ system:
     pull_up_down: "PUD_UP" 
   
   alarm_monitor:
-    enabled: true
+    enabled: false
     # Pin GPIO (BCM) para la alarma de la fuente de alimentación. Pin 37 (BOARD) -> 26 (BCM).
     pin: 26
     # La alarma se activa (TRUE) cuando el pin pasa a estado HIGH.
     pull_up_down: "PUD_DOWN"
   
   reboot_monitor:
-    enabled: true
+    enabled: false
     # Pin GPIO (BCM) para la señal de "handshake" o "arranque OK" a la fuente de alimentación.
     # Al arrancar, la aplicación pondrá este pin en estado ALTO (HIGH).
     # Pin 32 (BOARD) -> 12 (BCM).
