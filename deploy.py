@@ -206,12 +206,12 @@ def main():
         repo_check_cmd = f"[ -d {APP_DIR}/.git ] && echo 'exists' || echo 'not exists'"
         repo_status = deployer.execute(repo_check_cmd)
 
-        if 'exists' in repo_status:
+        if repo_status == 'exists':
             print_info("El repositorio ya existe. Forzando actualización desde el origen...")
             force_update_cmds = f"cd {APP_DIR} && git fetch --all && git reset --hard origin/{git_branch} && git clean -fdx"
             deployer.execute(force_update_cmds)
         else:
-            print_info("Clonando el repositorio...")
+            print_info("El repositorio no existe. Clonando...") # Mensaje corregido para mayor claridad
             deployer.execute(f"git clone --branch {git_branch} {repo_url} {APP_DIR}")
 
         print_info("Configurando el entorno virtual de Python...")
