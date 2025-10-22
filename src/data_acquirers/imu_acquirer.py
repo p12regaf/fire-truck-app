@@ -36,7 +36,7 @@ class IMUAcquirer(BaseAcquirer):
     def _parse_stabilometer_data(self, line: str) -> Optional[dict]:
         """Parsea la trama del estabilómetro, convirtiendo valores a float si es posible."""
         try:
-            values = [v.strip() for v in line.split(';')]
+            values = [v.strip() for v in line.split(';') if v.strip()]
             if len(values) != self.EXPECTED_VALUES:
                 log.warning(f"Trama con número incorrecto de valores. "
                             f"Esperados: {self.EXPECTED_VALUES}, Recibidos: {len(values)}. Trama: '{line}'")
