@@ -56,7 +56,7 @@ data_sources:
   can:
     enabled: true
     interface: "can0"
-    bitrate: 500000
+    bitrate: 250000
     inactivity_timeout_sec: 10
   
     # ID de la petición de diagnóstico estándar (broadcast)
