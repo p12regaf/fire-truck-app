@@ -1,158 +1,26 @@
 import logging
 import time
-import struct
-from typing import Optional, Tuple
-
-import smbus2 as smbus
+import smbus2 as smbus # Usamos smbus2 que ya está en tus dependencias
+from typing import Optional, Dict, Any
 
 from .base_acquirer import BaseAcquirer
 
 log = logging.getLogger(__name__)
-
-# Constante para la conversión de milímetros por segundo a kilómetros por hora
-MMS_TO_KMPH = 0.0036
-
-# --- Constantes del protocolo u-blox ---
-# Caracteres de sincronización que inician cada mensaje UBX
-UBX_SYNC_CHAR_1 = 0xB5
-UBX_SYNC_CHAR_2 = 0x62
-
-# Clases de mensajes UBX
-UBX_CLASS_NAV = 0x01  # Mensajes de Navegación
-
-# IDs de mensajes UBX dentro de la clase NAV
-UBX_ID_NAV_PVT = 0x07 # Position, Velocity, Time Solution
-
-# Registros I2C del módulo u-blox
-# Registro para leer el número de bytes disponibles en el buffer
-UBLOX_I2C_BYTES_AVAIL_REG = 0xFD
-# Registro para leer el stream de datos
-UBLOX_I2C_DATA_STREAM_REG = 0xFF
-
 
 class GPSAcquirer(BaseAcquirer):
     def __init__(self, config, data_queue, shutdown_event):
         super().__init__(config, data_queue, shutdown_event, name="GPSAcquirer", config_key="gps")
         self.bus = None
         self.i2c_addr = self.config.get('i2c_addr', 0x42)
-        # Búfer para almacenar datos parciales leídos del I2C
+        
+        # Buffer para almacenar datos parciales leídos del I2C
         self._buffer = bytearray()
-
-    def _calculate_checksum(self, payload: bytes) -> Tuple[int, int]:
-        """Calcula el checksum Fletcher de 8 bits para un mensaje UBX."""
-        ck_a, ck_b = 0, 0
-        for byte in payload:
-            ck_a = (ck_a + byte) & 0xFF
-            ck_b = (ck_b + ck_a) & 0xFF
-        return ck_a, ck_b
-
-    def _send_ubx_poll_request(self, class_id: int, msg_id: int) -> bool:
-        """Construye y envía una solicitud de sondeo (poll) UBX por I2C."""
-        try:
-            # Una solicitud de sondeo tiene una longitud de payload de 0
-            payload_len = 0
-            # El mensaje a checksumear incluye: Clase, ID, Longitud
-            message_core = struct.pack('<BBH', class_id, msg_id, payload_len)
-            
-            ck_a, ck_b = self._calculate_checksum(message_core)
-            
-            # El mensaje completo a enviar
-            message = bytes([UBX_SYNC_CHAR_1, UBX_SYNC_CHAR_2]) + message_core + bytes([ck_a, ck_b])
-            
-            # En I2C, se escribe al registro de data stream
-            self.bus.write_i2c_block_data(self.i2c_addr, UBLOX_I2C_DATA_STREAM_REG, list(message))
-            return True
-        except IOError as e:
-            log.error(f"Error al enviar mensaje UBX a {hex(self.i2c_addr)}: {e}")
-            return False
-
-    def _read_and_parse_ubx(self) -> Optional[dict]:
-        """Lee datos del bus I2C, busca un mensaje UBX válido y lo decodifica."""
-        try:
-            # 1. Consultar cuántos bytes hay disponibles para leer
-            bytes_available_data = self.bus.read_i2c_block_data(self.i2c_addr, UBLOX_I2C_BYTES_AVAIL_REG, 2)
-            bytes_available = (bytes_available_data[0] << 8) | bytes_available_data[1]
-
-            if bytes_available == 0:
-                return None
-
-            # 2. Leer los bytes disponibles del stream de datos
-            # Limitamos la lectura para no bloquear el bus demasiado tiempo
-            data_to_read = min(bytes_available, 128) 
-            raw_data = self.bus.read_i2c_block_data(self.i2c_addr, UBLOX_I2C_DATA_STREAM_REG, data_to_read)
-            self._buffer.extend(raw_data)
-
-        except IOError as e:
-            log.warning(f"Error de I/O al leer del GPS: {e}")
-            return None
-
-        # 3. Buscar un mensaje UBX completo en nuestro búfer
-        while len(self._buffer) >= 8: # Mínimo para cabecera y checksum
-            # Buscar el inicio del mensaje
-            if self._buffer[0] != UBX_SYNC_CHAR_1 or self._buffer[1] != UBX_SYNC_CHAR_2:
-                self._buffer.pop(0) # Descartar byte y seguir buscando
-                continue
-
-            # Tenemos un posible inicio. Leer la cabecera.
-            # < = Little-endian, B = uchar (1 byte), H = ushort (2 bytes)
-            class_id, msg_id, payload_len = struct.unpack_from('<BBH', self._buffer, 2)
-            
-            # Comprobar si tenemos el mensaje completo en el búfer
-            msg_end_idx = 6 + payload_len + 2 # Cabecera (6) + payload + checksum (2)
-            if len(self._buffer) < msg_end_idx:
-                return None # Mensaje incompleto, esperar más datos
-
-            # Extraer el mensaje completo
-            message_bytes = self._buffer[:msg_end_idx]
-            # Quitar el mensaje procesado del búfer
-            self._buffer = self._buffer[msg_end_idx:]
-
-            # 4. Validar el checksum
-            payload = message_bytes[2:6+payload_len]
-            ck_a, ck_b = self._calculate_checksum(payload)
-            
-            if ck_a != message_bytes[msg_end_idx - 2] or ck_b != message_bytes[msg_end_idx - 1]:
-                log.warning("Checksum de mensaje UBX incorrecto. Descartando.")
-                continue # El checksum no coincide, buscar el siguiente mensaje
-
-            # 5. Si el checksum es válido y es el mensaje que nos interesa, decodificarlo
-            if class_id == UBX_CLASS_NAV and msg_id == UBX_ID_NAV_PVT:
-                return self._parse_nav_pvt(message_bytes[6:6+payload_len])
-
-        return None # No se encontró un mensaje completo y válido
-
-    def _parse_nav_pvt(self, payload: bytes) -> dict:
-        """Decodifica el payload de un mensaje NAV-PVT."""
-        # Estructura del payload NAV-PVT (solo los campos que nos interesan)
-        # offset 20: fixType (1 byte)
-        # offset 24: lon (4 bytes, int32, 1e-7 deg)
-        # offset 28: lat (4 bytes, int32, 1e-7 deg)
-        # offset 60: gSpeed (4 bytes, int32, mm/s)
         
-        # Formato: 20 bytes de padding, 1 byte fixType, 3 bytes padding, 
-        # 2x int32 para lon/lat, 28 bytes padding, 1x int32 para gSpeed
-        # 'x' es un byte de padding
-        # 'B' es un unsigned char (1 byte)
-        # 'l' es un signed long (4 bytes)
-        fix_type, lon, lat, g_speed = struct.unpack_from('<20x B 3x l l 28x l', payload)
+        # Almacenamos la última velocidad leída de una trama RMC para añadirla a la GGA
+        self._last_speed_kmh: Optional[str] = None
         
-        # La librería original considera fix >= 3 como válido
-        if fix_type >= 3:
-            # Escalar los valores a sus unidades correctas
-            latitude = lat / 1e7
-            longitude = lon / 1e7
-            speed_mms = g_speed
-            speed_kmph = speed_mms * MMS_TO_KMPH
-
-            return {
-                "latitude": f"{latitude:.6f}",
-                "longitude": f"{longitude:.6f}",
-                "speed_kmph": f"{speed_kmph:.2f}",
-                "fix_status": "Active"
-            }
-        else:
-            log.info(f"GPS no tiene un fix válido (fix_type={fix_type}). Esperando señal.")
-            return {}
+        # Límite para el buffer para evitar fugas de memoria si los datos no tienen fin de línea
+        self.MAX_BUFFER_SIZE = 4096 
 
     def _setup(self) -> bool:
         """Inicializa la comunicación I2C con el módulo GPS."""
@@ -160,12 +28,10 @@ class GPSAcquirer(BaseAcquirer):
             bus_id = self.config.get('i2c_bus', 1)
             self.bus = smbus.SMBus(bus_id)
             
-            # Verificación de conexión: intentar leer un registro.
-            # Si esto falla, el dispositivo no está en el bus.
+            # Verificación de conexión: intentar leer un byte.
             self.bus.read_byte(self.i2c_addr)
             
-            log.info(f"Comunicación I2C con dispositivo en {hex(self.i2c_addr)} en bus {bus_id} iniciada.")
-            # Opcional: podrías enviar un mensaje de configuración aquí si fuera necesario
+            log.info(f"Comunicación I2C (NMEA) con dispositivo en {hex(self.i2c_addr)} en bus {bus_id} iniciada.")
             return True
         except (IOError, FileNotFoundError) as e:
             log.critical(f"FATAL: No se pudo inicializar I2C para GPS: {e}. Compruebe conexiones y configuración.")
@@ -174,27 +40,102 @@ class GPSAcquirer(BaseAcquirer):
             self.bus = None
             return False
 
+    def _convert_lat_lon(self, coord: str, direction: str) -> Optional[float]:
+        """Convierte coordenadas de formato NMEA (DDMM.MMMM) a grados decimales."""
+        if not coord:
+            return None
+        try:
+            grados = int(float(coord) / 100)
+            minutos = float(coord) - grados * 100
+            dec = grados + minutos / 60.0
+            if direction in ['S', 'W']:
+                dec = -dec
+            return round(dec, 7)
+        except (ValueError, TypeError):
+            return None
+
+    def _parse_gnrmc(self, line: str):
+        """Parsea una trama GNRMC/GPRMC para extraer la velocidad y la guarda en estado."""
+        try:
+            campos = line.strip().split(",")
+            if len(campos) < 8 or not campos[7]:
+                self._last_speed_kmh = None
+                return
+            
+            velocidad_nudos = float(campos[7])
+            velocidad_kmh = velocidad_nudos * 1.852
+            self._last_speed_kmh = f"{velocidad_kmh:.2f}"
+        except (ValueError, IndexError) as e:
+            log.warning(f"Error parseando GNRMC: {e} en línea: {line}")
+            self._last_speed_kmh = None
+
+    def _parse_gngga(self, line: str) -> Optional[Dict[str, Any]]:
+        """Parsea una trama GNGGA/GPGGA y la combina con la última velocidad conocida."""
+        try:
+            campos = line.strip().split(",")
+            if len(campos) < 10:
+                return None
+                
+            fix = campos[6]
+            # Si no hay fix (fix='0') o no hay coordenadas, los datos no son válidos
+            if fix == '0' or not campos[2] or not campos[4]:
+                log.info("Trama GGA recibida, pero sin fix de GPS.")
+                return None
+
+            lat_decimal = self._convert_lat_lon(campos[2], campos[3])
+            lon_decimal = self._convert_lat_lon(campos[4], campos[5])
+
+            if lat_decimal is None or lon_decimal is None:
+                return None
+
+            return {
+                "latitude": f"{lat_decimal:.6f}",
+                "longitude": f"{lon_decimal:.6f}",
+                "altitude_m": campos[9] if campos[9] else "N/A",
+                "hdop": campos[8] if campos[8] else "N/A",
+                "fix_quality": fix,
+                "num_sats": campos[7] if campos[7] else "N/A",
+                "speed_kmph": self._last_speed_kmh if self._last_speed_kmh is not None else "N/A"
+            }
+        except (ValueError, IndexError) as e:
+            log.warning(f"Error parseando GNGGA: {e} en línea: {line}")
+            return None
+
     def _acquire_data(self):
-        """Solicita, lee y procesa datos del GPS."""
-        # 1. Solicitar el último dato NAV-PVT al módulo
-        if not self._send_ubx_poll_request(UBX_CLASS_NAV, UBX_ID_NAV_PVT):
-            # Si falla el envío, esperar y reintentar en el próximo ciclo
-            self.shutdown_event.wait(1.0)
+        """Lee datos del bus I2C, busca tramas NMEA completas y las procesa."""
+        try:
+            # Leemos en bloques para eficiencia. 32 bytes es un tamaño común.
+            block = self.bus.read_i2c_block_data(self.i2c_addr, 0, 32)
+            self._buffer.extend(byte for byte in block if byte != 0) # Ignorar bytes nulos
+        except IOError:
+            # Es normal tener errores de I/O si el GPS no tiene datos listos.
+            # Esperamos un poco para no saturar el bus.
+            self.shutdown_event.wait(0.2)
             return
 
-        # 2. Darle tiempo al módulo para procesar y preparar la respuesta
+        if len(self._buffer) > self.MAX_BUFFER_SIZE:
+            log.error(f"Buffer de GPS superó el límite de {self.MAX_BUFFER_SIZE} bytes. Vaciando para recuperarse.")
+            self._buffer = bytearray()
+
+        # Procesar todas las líneas completas que tengamos en el buffer
+        while b'\n' in self._buffer:
+            line_bytes, self._buffer = self._buffer.split(b'\n', 1)
+            line_str = line_bytes.decode('ascii', errors='ignore').strip()
+
+            if line_str.startswith('$GNRMC') or line_str.startswith('$GPRMC'):
+                self._parse_gnrmc(line_str)
+            
+            elif line_str.startswith('$GNGGA') or line_str.startswith('$GPGGA'):
+                parsed_data = self._parse_gngga(line_str)
+                
+                if parsed_data:
+                    packet = self._create_data_packet("gps", parsed_data)
+                    self.data_queue.put(packet)
+                    log.debug(f"Paquete GPS (NMEA) válido procesado: {parsed_data}")
+        
+        # Pequeña pausa para no consumir 100% de CPU
         self.shutdown_event.wait(0.1)
 
-        # 3. Leer y decodificar la respuesta
-        parsed_data = self._read_and_parse_ubx()
-
-        if parsed_data:
-            packet = self._create_data_packet("gps", parsed_data)
-            self.data_queue.put(packet)
-            log.debug(f"Paquete GPS válido procesado: {parsed_data}")
-        
-        # 4. Esperar antes de la siguiente lectura para una tasa de ~1Hz.
-        self.shutdown_event.wait(0.9)
 
     def _cleanup(self):
         """Cierra el bus I2C al finalizar."""
