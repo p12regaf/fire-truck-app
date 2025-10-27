@@ -207,9 +207,11 @@ class CANAcquirer(BaseAcquirer):
         if not line: # Si la línea está vacía, el proceso puede haber terminado
             return
 
-        msg = self._parse_candump_line(line)
-        if not msg:
+        parsed_info = self._parse_candump_line(line)
+        if not parsed_info:
             return
+            
+        msg, interface, arb_id_hex = parsed_info
 
         # Extraer PGN y procesar
         pgn = (msg.arbitration_id >> 8) & 0x1FFFF
@@ -218,12 +220,15 @@ class CANAcquirer(BaseAcquirer):
             
             if parsed_data:
                 pgn_info = self.pgn_map[pgn]
+                # ### CAMBIO: Se añaden 'interface' y 'arbitration_id_hex' al paquete
                 final_data = {
                     "pgn_name": pgn_info['name'],
                     "pgn": pgn,
                     "value": parsed_data['value'],
                     "unit": pgn_info.get('unit', 'N/A'),
-                    "raw_data": msg.data.hex().upper()
+                    "raw_data": msg.data.hex().upper(),
+                    "interface": interface,
+                    "arbitration_id_hex": arb_id_hex.upper()
                 }
                 packet = self._create_data_packet("can", final_data)
                 self.data_queue.put(packet)
@@ -249,35 +254,43 @@ class CANAcquirer(BaseAcquirer):
 
     # --- Métodos de Parseo (del script original) ---
 
-    def _parse_candump_line(self, line: str) -> Optional[can.Message]:
-        """Parsea una línea de texto de candump a un objeto can.Message."""
+    def _parse_candump_line(self, line: str) -> Optional[tuple]:
+        """
+        Parsea una línea de texto de candump a una tupla que contiene
+        (can.Message, interface, arbitration_id_hex).
+        """
         try:
-            # Formato esperado: (16643243.34234) can0 18F00480#...
-            # O simplemente: can0 18F00480   [8] ...
             parts = line.strip().split()
             
-            # Buscar el ID del CAN, que es el primer elemento que parece un ID
+            interface_name = "N/A"
             arb_id_str = ""
             data_start_index = -1
+            
+            # Buscar el nombre de la interfaz y el ID
             for i, part in enumerate(parts):
-                if len(part) > 3 and '[' not in part and ']' not in part:
+                if 'can' in part:
+                    interface_name = part
+                if len(part) > 3 and '#' not in part and '[' not in part and ']' not in part and 'can' not in part:
                     try:
                         int(part, 16)
-                        arb_id_str = part.split('#')[0] # Manejar formato con CAN FD
-                        data_start_index = i + 2 # Saltar el ID y el '[8]'
+                        arb_id_str = part
+                        # El siguiente elemento suele ser el '[dlc]'
+                        data_start_index = i + 2
                         break
                     except ValueError:
                         continue
             
-            if not arb_id_str or data_start_index == -1: return None
+            if not arb_id_str or data_start_index == -1:
+                return None
 
             data_bytes = bytes.fromhex("".join(parts[data_start_index:]))
             
-            return can.Message(
+            message = can.Message(
                 arbitration_id=int(arb_id_str, 16),
                 data=data_bytes,
                 is_extended_id=True # J1939 siempre usa IDs extendidos
             )
+            return (message, interface_name, arb_id_str)
         except (ValueError, IndexError):
             log.warning(f"No se pudo parsear la línea de candump: '{line.strip()}'")
             return None

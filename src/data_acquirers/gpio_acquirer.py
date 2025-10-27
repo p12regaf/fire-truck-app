@@ -12,7 +12,7 @@ class GPIOAcquirer(BaseAcquirer):
     def __init__(self, config, data_queue, shutdown_event):
         super().__init__(config, data_queue, shutdown_event, name="GPIOAcquirer", config_key="gpio_rotativo")
         self.pin = self.config.get("pin")
-        self.period = self.config.get("log_period_sec", 15)
+        self.period = self.config.get("log_period_sec", 1)
 
     def _setup(self) -> bool:
         if self.pin is None:
@@ -35,11 +35,12 @@ class GPIOAcquirer(BaseAcquirer):
             return
 
         status_int = GPIO.input(self.pin)
-        status_str = "ON" if status_int == GPIO.HIGH else "OFF"
+        # ### CAMBIO: Se envía 1 o 0 en lugar de "ON"/"OFF"
+        status_val = 1 if status_int == GPIO.HIGH else 0
         
         data = {
             "pin": self.pin,
-            "status": status_str
+            "status": status_val
         }
         packet = self._create_data_packet("rotativo", data)
         self.data_queue.put(packet)

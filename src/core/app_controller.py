@@ -10,7 +10,7 @@ import RPi.GPIO as GPIO
 from .session_manager import SessionManager
 from src.data_acquirers.can_acquirer import CANAcquirer
 from src.data_acquirers.gps_acquirer import GPSAcquirer
-from src.data_acquirers.imu_acquirer import IMUAcquirer
+from src.data_acquirers.imu_acquirer import IMUAcquirer # Importante para las claves
 from src.data_acquirers.gpio_acquirer import GPIOAcquirer
 from src.transmitters.ftp_transmitter import FTPTransmitter
 from .power_monitor import PowerMonitor
@@ -115,26 +115,32 @@ class AppController:
 
     def _write_session_headers(self):
         """
-        Escribe la cabecera de la nueva sesión en cada archivo de log diario
-        y prepara los archivos RealTime.
+        Escribe la cabecera de la nueva sesión Y la cabecera de columnas
+        en cada archivo de log diario y prepara los archivos RealTime.
         """
-        log.info("Escribiendo cabeceras de sesión en archivos de log diarios...")
+        log.info("Escribiendo cabeceras de sesión y de columnas en archivos de log...")
         for data_type in self.active_data_types:
             try:
-                # Escribir cabecera en el archivo de log principal
+                # Escribir cabeceras en el archivo de log principal
                 log_path = self.session_manager.get_log_path(data_type)
                 session_header = self.session_manager.get_session_header(data_type)
+                column_header = self.session_manager.get_column_header(data_type)
+                
                 with open(log_path, 'a') as f:
                     f.write(session_header)
+                    f.write(column_header)
                 
-                # Preparar el archivo de tiempo real
+                # Preparar el archivo de tiempo real con sus cabeceras
                 rt_path = self.session_manager.get_realtime_log_path(data_type)
                 with open(rt_path, 'w') as f:
-                    f.write(f"Session {self.session_manager.current_session_id} started. Waiting for data...\n")
+                    f.write(session_header)
+                    f.write(column_header)
+                    f.write("Esperando datos...\n")
                     
             except IOError as e:
                 log.error(f"No se pudo escribir la cabecera para '{data_type}': {e}")
-        log.info("Escritura de cabeceras de sesión completada.")
+        log.info("Escritura de cabeceras completada.")
+
 
     def start(self):
         """Inicia todos los hilos de trabajo y el procesador de datos."""
@@ -173,50 +179,110 @@ class AppController:
     def is_shutting_down(self) -> bool:
         return self.shutdown_event.is_set()
 
+    def _format_log_line(self, data_packet: dict) -> str:
+        """Formatea una línea de log según el tipo de dato."""
+        data_type = data_packet['type']
+        data = data_packet['data']
+        ts_obj = datetime.fromisoformat(data_packet['timestamp'])
+
+        if data_type == "estabilometro":
+            # Asegura el orden correcto de las columnas usando las claves del acquirer
+            ordered_values = [str(data.get(key, 'N/A')) for key in IMUAcquirer.DATA_KEYS]
+            return ";".join(ordered_values) + ";\n"
+        
+        elif data_type == "gps":
+            # Formato: HoraRaspberry,Fecha,Hora(GPS),Latitud,Longitud,Altitud,HDOP,Fix,NumSats,Velocidad(km/h)
+            if data.get("status") == "Valid":
+                return (
+                    f"{ts_obj.strftime('%H:%M:%S')},"
+                    f"{data.get('gps_date', 'N/A')},"
+                    f"{data.get('gps_time', 'N/A')},"
+                    f"{data.get('latitude', 'N/A')},"
+                    f"{data.get('longitude', 'N/A')},"
+                    f"{data.get('altitude_m', 'N/A')},"
+                    f"{data.get('hdop', 'N/A')},"
+                    f"{data.get('fix_quality', 'N/A')},"
+                    f"{data.get('num_sats', 'N/A')},"
+                    f"{data.get('speed_kmph', 'N/A')}\n"
+                )
+            else:
+                 # Si no hay fix, se loguea una línea con N/A
+                 return f"{ts_obj.strftime('%H:%M:%S')},N/A,N/A,N/A,N/A,N/A,N/A,0,N/A,N/A\n"
+
+        elif data_type == "rotativo":
+            # Formato: Fecha-Hora;Estado
+            ts_str = ts_obj.strftime('%d/%m/%Y-%H:%M:%S')
+            return f"{ts_str};{data.get('status', 0)}\n"
+            
+        elif data_type == "can":
+            # Formato: Fecha-Hora   InterfazCAN   PGN   [Bytes]   Datos
+            ts_str = ts_obj.strftime('%d/%m/%Y-%H:%M:%S')
+            raw_data_hex = data.get('raw_data', '')
+            data_bytes = bytes.fromhex(raw_data_hex)
+            data_len = len(data_bytes)
+            # Añadir espacios entre bytes
+            data_str_spaced = ' '.join(f'{b:02X}' for b in data_bytes)
+            
+            return (
+                f"{ts_str}   "
+                f"{data.get('interface', 'N/A')}  "
+                f"{data.get('arbitration_id_hex', 'N/A'):>8}   " # Alineado a 8 caracteres
+                f"[{data_len}]  {data_str_spaced}\n"
+            )
+            
+        return f"{data_packet['timestamp']};{data}\n" # Fallback
+
     def _process_data_queue(self):
         """
-
-        Bucle principal que consume la cola de datos, los registra y actualiza el estado.
+        Bucle que consume la cola, formatea los datos según el nuevo
+        estándar y los escribe en los archivos de log.
         """
         log.info("Procesador de datos iniciado.")
         while not self.shutdown_event.is_set():
             try:
                 data_packet = self.data_queue.get(timeout=1)
                 
-                data_type = data_packet['type']
-                timestamp = data_packet['timestamp']
-                data_content = data_packet['data']
-
                 with self.data_lock:
-                    self.latest_data[data_type] = data_packet
+                    self.latest_data[data_packet['type']] = data_packet
                 
-                log_file_path = self.session_manager.get_log_path(data_type)
+                # Formatear la línea de log
+                log_line = self._format_log_line(data_packet)
+
+                # Escribir en el archivo de log diario
+                log_file_path = self.session_manager.get_log_path(data_packet['type'])
                 try:
-                    # El modo 'a' (append) es clave para el log diario
                     with open(log_file_path, 'a') as f:
-                        log_line = f"{timestamp};{data_content}\n"
                         f.write(log_line)
                 except Exception as e:
-                    log.error(f"No se pudo escribir en el log para {data_type}: {e}")
+                    log.error(f"No se pudo escribir en el log para {data_packet['type']}: {e}")
 
-                self._update_realtime_file(data_type, data_packet)
+                # Actualizar el archivo de tiempo real
+                self._update_realtime_file(data_packet['type'], log_line)
 
             except Empty:
                 continue
             except Exception as e:
-                log.error(f"Error inesperado en el procesador de datos: {e}")
+                log.error(f"Error inesperado en el procesador de datos: {e}", exc_info=True)
 
         log.info("Procesador de datos detenido.")
     
-    def _update_realtime_file(self, data_type: str, data_packet: dict):
-        """Actualiza el archivo _RealTime.txt para un tipo de dato específico."""
+    def _update_realtime_file(self, data_type: str, formatted_log_line: str):
+        """
+        Actualiza el archivo _RealTime.txt, reescribiéndolo con las cabeceras
+        y la última línea de datos.
+        """
         try:
             rt_path = self.session_manager.get_realtime_log_path(data_type)
+            session_header = self.session_manager.get_session_header(data_type)
+            column_header = self.session_manager.get_column_header(data_type)
+            
             with open(rt_path, 'w') as f:
-                f.write(f"Timestamp: {data_packet['timestamp']}\n")
-                f.write(f"Data: {data_packet['data']}\n")
+                f.write(session_header)
+                f.write(column_header)
+                f.write(formatted_log_line)
         except Exception as e:
             log.error(f"No se pudo actualizar el archivo RealTime para {data_type}: {e}")
+
 
     def get_latest_data(self) -> dict:
         """Devuelve una copia del último estado de los datos de forma segura."""

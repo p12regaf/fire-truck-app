@@ -15,7 +15,8 @@ class GPSAcquirer(BaseAcquirer):
         
         self._buffer = bytearray()
         self._last_speed_kmh: Optional[str] = None
-        self.MAX_BUFFER_SIZE = 4096 
+        self._last_date_str: Optional[str] = None # NUEVO: Para almacenar la fecha de la trama RMC
+        self.MAX_BUFFER_SIZE = 4096
 
     def _setup(self) -> bool:
         try:
@@ -47,13 +48,20 @@ class GPSAcquirer(BaseAcquirer):
     def _parse_gnrmc(self, line: str):
         try:
             campos = line.strip().split(",")
-            if len(campos) < 8 or not campos[7]:
+            # Extraer velocidad
+            if len(campos) >= 8 and campos[7]:
+                velocidad_nudos = float(campos[7])
+                velocidad_kmh = velocidad_nudos * 1.852
+                self._last_speed_kmh = f"{velocidad_kmh:.2f}"
+            else:
                 self._last_speed_kmh = None
-                return
-            
-            velocidad_nudos = float(campos[7])
-            velocidad_kmh = velocidad_nudos * 1.852
-            self._last_speed_kmh = f"{velocidad_kmh:.2f}"
+
+            # NUEVO: Extraer fecha
+            if len(campos) >= 10 and campos[9]:
+                ddmmyy = campos[9]
+                # Formatear a dd/mm/yyyy
+                self._last_date_str = f"{ddmmyy[0:2]}/{ddmmyy[2:4]}/20{ddmmyy[4:6]}"
+                
         except (ValueError, IndexError) as e:
             log.warning(f"Error parseando GNRMC: {e} en línea: {line}")
             self._last_speed_kmh = None
@@ -65,7 +73,6 @@ class GPSAcquirer(BaseAcquirer):
                 return None
                 
             fix = campos[6]
-            # ### CAMBIO 1: Si no hay fix, en lugar de retornar None, retornamos un diccionario de estado.
             if fix == '0' or not campos[2] or not campos[4]:
                 log.info("Trama GGA recibida, pero sin fix de GPS. Se registrará el estado.")
                 return {"status": "No Fix"}
@@ -75,17 +82,24 @@ class GPSAcquirer(BaseAcquirer):
 
             if lat_decimal is None or lon_decimal is None:
                 return None
+            
+            # NUEVO: Extraer y formatear hora GPS
+            gps_time_str = "N/A"
+            if campos[1]:
+                hhmmss = campos[1].split('.')[0]
+                gps_time_str = f"{hhmmss[0:2]}:{hhmmss[2:4]}:{hhmmss[4:6]}"
 
-            # ### CAMBIO 2: Añadimos 'status' para indicar que los datos son válidos.
             return {
                 "status": "Valid",
-                "latitude": f"{lat_decimal:.6f}",
-                "longitude": f"{lon_decimal:.6f}",
+                "latitude": f"{lat_decimal:.7f}", # Aumentada precisión para coincidir con ejemplo
+                "longitude": f"{lon_decimal:.7f}",
                 "altitude_m": campos[9] if campos[9] else "N/A",
                 "hdop": campos[8] if campos[8] else "N/A",
                 "fix_quality": fix,
                 "num_sats": campos[7] if campos[7] else "N/A",
-                "speed_kmph": self._last_speed_kmh if self._last_speed_kmh is not None else "N/A"
+                "speed_kmph": self._last_speed_kmh if self._last_speed_kmh is not None else "N/A",
+                "gps_time": gps_time_str,
+                "gps_date": self._last_date_str if self._last_date_str is not None else "N/A"
             }
         except (ValueError, IndexError) as e:
             log.warning(f"Error parseando GNGGA: {e} en línea: {line}")
@@ -128,7 +142,6 @@ class GPSAcquirer(BaseAcquirer):
                     if parsed_data:
                         packet = self._create_data_packet("gps", parsed_data)
                         self.data_queue.put(packet)
-                        # ### CAMBIO 3: Actualizamos el mensaje de log para ser más claro.
                         if parsed_data.get("status") == "Valid":
                             log.debug(f"Paquete GPS (NMEA) válido procesado: {parsed_data}")
                         else:

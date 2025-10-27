@@ -18,6 +18,14 @@ class SessionManager:
         "estabilometro": "ESTABILIDAD",
         "rotativo": "ROTATIVO"
     }
+    
+    # NUEVO: Definición centralizada de las cabeceras de columnas para cada tipo de log
+    COLUMN_HEADERS = {
+        "estabilometro": "ax; ay; az; gx; gy; gz; roll; pitch; yaw; timeantwifi; usciclo1; usciclo2; usciclo3; usciclo4; usciclo5; si; accmag; microsds; k3\n",
+        "gps": "HoraRaspberry,Fecha,Hora(GPS),Latitud,Longitud,Altitud,HDOP,Fix,NumSats,Velocidad(km/h)\n",
+        "rotativo": "Fecha-Hora;Estado\n",
+        "can": "Fecha-Hora;InterfazCAN;PGN;Número Bytes;Datos\n"
+    }
 
     def __init__(self, config: dict):
         self.config = config
@@ -115,12 +123,26 @@ class SessionManager:
     def get_session_header(self, data_type: str) -> str:
         """
         Genera la cabecera de la sesión para ser escrita en el archivo de log.
-        Ej: ESTABILIDAD;01/10/2025 09:36:54;DOBACK024;Sesión:1;
+        Se ajusta el formato del timestamp y el terminador según el tipo de dato.
         """
         type_name = self._get_data_type_name(data_type)
-        timestamp_str = self.session_time.strftime('%d/%m/%Y %H:%M:%S')
+        
+        # Formato de timestamp condicional
+        if data_type == "estabilometro":
+            timestamp_str = self.session_time.strftime('%d/%m/%Y %H:%M:%S')
+            terminator = ";\n"
+        else:
+            timestamp_str = self.session_time.strftime('%d/%m/%Y-%H:%M:%S')
+            terminator = "\n"
+
         header = (
             f"\n{type_name};{timestamp_str};{self.device_name};"
-            f"Sesión:{self.current_session_id};\n"
+            f"Sesión:{self.current_session_id}{terminator}"
         )
         return header
+
+    def get_column_header(self, data_type: str) -> str:
+        """
+        Devuelve la cadena de la cabecera de columnas para un tipo de dato.
+        """
+        return self.COLUMN_HEADERS.get(data_type, "")
