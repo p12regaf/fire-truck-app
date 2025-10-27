@@ -19,12 +19,12 @@ class SessionManager:
         "rotativo": "ROTATIVO"
     }
     
-    # NUEVO: Definición centralizada de las cabeceras de columnas para cada tipo de log
+    # NUEVO: Definición de las cabeceras de columnas con formato unificado (separado por ';')
     COLUMN_HEADERS = {
-        "estabilometro": "ax; ay; az; gx; gy; gz; roll; pitch; yaw; timeantwifi; usciclo1; usciclo2; usciclo3; usciclo4; usciclo5; si; accmag; microsds; k3\n",
-        "gps": "HoraRaspberry,Fecha,Hora(GPS),Latitud,Longitud,Altitud,HDOP,Fix,NumSats,Velocidad(km/h)\n",
-        "rotativo": "Fecha-Hora;Estado\n",
-        "can": "Fecha-Hora;InterfazCAN;PGN;Número Bytes;Datos\n"
+        "estabilometro": "ax;ay;az;gx;gy;gz;roll;pitch;yaw;timeantwifi;usciclo1;usciclo2;usciclo3;usciclo4;usciclo5;si;accmag;microsds;k3\n",
+        "gps": "Timestamp;FechaGPS;HoraGPS;Latitud;Longitud;Altitud;HDOP;Fix;NumSats;Velocidad(km/h)\n",
+        "rotativo": "Timestamp;Estado\n",
+        "can": "Timestamp;InterfazCAN;PGN;NumBytes;Datos\n"
     }
 
     def __init__(self, config: dict):
@@ -122,18 +122,11 @@ class SessionManager:
 
     def get_session_header(self, data_type: str) -> str:
         """
-        Genera la cabecera de la sesión para ser escrita en el archivo de log.
-        Se ajusta el formato del timestamp y el terminador según el tipo de dato.
+        Genera la cabecera de la sesión con formato unificado para todos los logs.
         """
         type_name = self._get_data_type_name(data_type)
-        
-        # Formato de timestamp condicional
-        if data_type == "estabilometro":
-            timestamp_str = self.session_time.strftime('%d/%m/%Y %H:%M:%S')
-            terminator = ";\n"
-        else:
-            timestamp_str = self.session_time.strftime('%d/%m/%Y-%H:%M:%S')
-            terminator = "\n"
+        timestamp_str = self.session_time.strftime('%d/%m/%Y %H:%M:%S')
+        terminator = ";\n"
 
         header = (
             f"\n{type_name};{timestamp_str};{self.device_name};"
