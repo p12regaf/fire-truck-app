@@ -180,10 +180,11 @@ class AppController:
         return self.shutdown_event.is_set()
 
     def _format_log_line(self, data_packet: dict) -> str:
-        """Formatea una línea de log según el tipo de dato."""
+        """Formatea una línea de log según el tipo de dato, de forma unificada."""
         data_type = data_packet['type']
         data = data_packet['data']
         ts_obj = datetime.fromisoformat(data_packet['timestamp'])
+        ts_str = ts_obj.strftime('%d/%m/%Y %H:%M:%S')
 
         if data_type == "estabilometro":
             # Asegura el orden correcto de las columnas usando las claves del acquirer
@@ -191,46 +192,41 @@ class AppController:
             return ";".join(ordered_values) + ";\n"
         
         elif data_type == "gps":
-            # Formato: HoraRaspberry,Fecha,Hora(GPS),Latitud,Longitud,Altitud,HDOP,Fix,NumSats,Velocidad(km/h)
             if data.get("status") == "Valid":
                 return (
-                    f"{ts_obj.strftime('%H:%M:%S')},"
-                    f"{data.get('gps_date', 'N/A')},"
-                    f"{data.get('gps_time', 'N/A')},"
-                    f"{data.get('latitude', 'N/A')},"
-                    f"{data.get('longitude', 'N/A')},"
-                    f"{data.get('altitude_m', 'N/A')},"
-                    f"{data.get('hdop', 'N/A')},"
-                    f"{data.get('fix_quality', 'N/A')},"
-                    f"{data.get('num_sats', 'N/A')},"
-                    f"{data.get('speed_kmph', 'N/A')}\n"
+                    f"{ts_str};"
+                    f"{data.get('gps_date', 'N/A')};"
+                    f"{data.get('gps_time', 'N/A')};"
+                    f"{data.get('latitude', 'N/A')};"
+                    f"{data.get('longitude', 'N/A')};"
+                    f"{data.get('altitude_m', 'N/A')};"
+                    f"{data.get('hdop', 'N/A')};"
+                    f"{data.get('fix_quality', 'N/A')};"
+                    f"{data.get('num_sats', 'N/A')};"
+                    f"{data.get('speed_kmph', 'N/A')};\n"
                 )
             else:
-                 # Si no hay fix, se loguea una línea con N/A
-                 return f"{ts_obj.strftime('%H:%M:%S')},N/A,N/A,N/A,N/A,N/A,N/A,0,N/A,N/A\n"
+                 # Si no hay fix, se loguea una línea con N/A y '0' en fix
+                 return f"{ts_str};N/A;N/A;N/A;N/A;N/A;N/A;0;N/A;N/A;\n"
 
         elif data_type == "rotativo":
-            # Formato: Fecha-Hora;Estado
-            ts_str = ts_obj.strftime('%d/%m/%Y-%H:%M:%S')
-            return f"{ts_str};{data.get('status', 0)}\n"
+            return f"{ts_str};{data.get('status', 0)};\n"
             
         elif data_type == "can":
-            # Formato: Fecha-Hora   InterfazCAN   PGN   [Bytes]   Datos
-            ts_str = ts_obj.strftime('%d/%m/%Y-%H:%M:%S')
             raw_data_hex = data.get('raw_data', '')
             data_bytes = bytes.fromhex(raw_data_hex)
-            data_len = len(data_bytes)
-            # Añadir espacios entre bytes
+            data_len_str = f"[{len(data_bytes)}]"
             data_str_spaced = ' '.join(f'{b:02X}' for b in data_bytes)
             
             return (
-                f"{ts_str}   "
-                f"{data.get('interface', 'N/A')}  "
-                f"{data.get('arbitration_id_hex', 'N/A'):>8}   " # Alineado a 8 caracteres
-                f"[{data_len}]  {data_str_spaced}\n"
+                f"{ts_str};"
+                f"{data.get('interface', 'N/A')};"
+                f"{data.get('arbitration_id_hex', 'N/A')};"
+                f"{data_len_str};"
+                f"{data_str_spaced};\n"
             )
             
-        return f"{data_packet['timestamp']};{data}\n" # Fallback
+        return f"{ts_str};{data};\n" # Fallback
 
     def _process_data_queue(self):
         """
