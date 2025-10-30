@@ -159,9 +159,9 @@ def main():
         # --- PASO 1: Preparación del Sistema ---
         print_step("Paso 1: Actualizando el sistema e instalando dependencias...")
         env = "DEBIAN_FRONTEND=noninteractive"
-        deployer.execute(f"{env} apt-get update", use_sudo=True)
-        deployer.execute(f"{env} apt-get upgrade -y", use_sudo=True)
-        deployer.execute(f"{env} apt-get install -y git python3-pip python3-venv can-utils i2c-tools", use_sudo=True)
+        # deployer.execute(f"{env} apt-get update", use_sudo=True)
+        # deployer.execute(f"{env} apt-get upgrade -y", use_sudo=True)
+        # deployer.execute(f"{env} apt-get install -y git python3-pip python3-venv can-utils i2c-tools", use_sudo=True)
         print_ok("Sistema preparado.")
 
         # --- PASO 2: Creación de Directorios ---
