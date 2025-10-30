@@ -43,8 +43,11 @@ if [[ $GIT_OUTPUT == *"Your branch is behind"* ]]; then
     log "Limpiando archivos no rastreados..."
     sudo -u cosigein git clean -fdx
 
+    log "Recreando el entorno virtual de Python..."
+    python3 -m venv .venv
+    
     log "Instalando/actualizando dependencias..."
-    /home/cosigein/fire-truck-app/.venv/bin/pip install -r requirements.txt
+    .venv/bin/pip install -r requirements.txt
 
     log "¡Actualización completada! Reiniciando el sistema para aplicar los cambios."
     reboot
