@@ -159,9 +159,9 @@ def main():
         # --- PASO 1: Preparación del Sistema ---
         print_step("Paso 1: Actualizando el sistema e instalando dependencias...")
         env = "DEBIAN_FRONTEND=noninteractive"
-        # deployer.execute(f"{env} apt-get update", use_sudo=True)
-        # deployer.execute(f"{env} apt-get upgrade -y", use_sudo=True)
-        # deployer.execute(f"{env} apt-get install -y git python3-pip python3-venv can-utils i2c-tools", use_sudo=True)
+        deployer.execute(f"{env} apt-get update", use_sudo=True)
+        deployer.execute(f"{env} apt-get upgrade -y", use_sudo=True)
+        deployer.execute(f"{env} apt-get install -y git python3-pip python3-venv can-utils i2c-tools", use_sudo=True)
         print_ok("Sistema preparado.")
 
         # --- PASO 2: Creación de Directorios ---
@@ -211,7 +211,7 @@ def main():
             force_update_cmds = f"cd {APP_DIR} && git fetch --all && git reset --hard origin/{git_branch} && git clean -fdx"
             deployer.execute(force_update_cmds)
         else:
-            print_info("El repositorio no existe. Clonando...") # Mensaje corregido para mayor claridad
+            print_info("El repositorio no existe. Clonando...")
             deployer.execute(f"git clone --branch {git_branch} {repo_url} {APP_DIR}")
 
         print_info("Configurando el entorno virtual de Python...")
@@ -220,13 +220,33 @@ def main():
         print_ok("Repositorio y dependencias listos.")
         
         # --- PASO 5: Configuración de Permisos ---
-        print_step("Paso 5: Configurando permisos de hardware y sudo...")
-        deployer.execute(f"chmod +x {APP_DIR}/scripts/check_and_install_update.sh", ignore_errors=True) # Script puede no existir
+        print_step("Paso 5: Configurando permisos...")
+        
+        # --- INICIO DEL CAMBIO ---
+        # 1. Hacer el script de actualización ejecutable.
+        #    Se elimina `ignore_errors=True` porque el script AHORA es esencial.
+        #    Si este comando falla, el despliegue debe detenerse.
+        print_info("Asegurando que el script de actualización sea ejecutable...")
+        update_script_path = f"{APP_DIR}/scripts/check_and_install_update.sh"
+        # Comprobamos si el fichero existe antes de intentar cambiarle los permisos
+        try:
+            deployer.sftp.stat(update_script_path)
+            deployer.execute(f"chmod +x {update_script_path}")
+        except FileNotFoundError:
+            print_warn(f"El script de actualización '{update_script_path}' no se encontró. Omitiendo `chmod`.")
+            print_warn("Asegúrate de que está en tu repositorio Git.")
+        # --- FIN DEL CAMBIO ---
+
+        # 2. Añadir usuario a los grupos de hardware necesarios.
+        print_info(f"Añadiendo usuario '{TARGET_USER}' a los grupos gpio, i2c, dialout...")
         deployer.execute(f"usermod -a -G gpio,i2c,dialout {TARGET_USER}", use_sudo=True)
         
+        # 3. Configurar permisos de `sudo` sin contraseña para `shutdown` y `reboot`.
+        print_info("Configurando permisos de sudo para apagado/reinicio...")
         sudo_rule = f'{TARGET_USER} ALL=(ALL) NOPASSWD: /sbin/shutdown, /sbin/reboot'
         deployer.execute(f"echo '{sudo_rule}' | sudo tee /etc/sudoers.d/99-fire-truck-app > /dev/null")
         deployer.execute(f"chmod 0440 /etc/sudoers.d/99-fire-truck-app", use_sudo=True)
+        
         print_ok("Permisos configurados.")
 
         # --- PASO 6: Configuración del Bus CAN ---
