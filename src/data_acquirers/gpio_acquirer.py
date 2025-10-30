@@ -43,7 +43,7 @@ class GPIOAcquirer(BaseAcquirer):
             "status": status_val
         }
         packet = self._create_data_packet("rotativo", data)
-        self.data_queue.put(packet)
+        self.data_queue.put(packet) 
 
     def _cleanup(self):
         # La limpieza se hará de forma centralizada al final de la aplicación.
