@@ -3,6 +3,8 @@
 APP_DIR="/home/cosigein/fire-truck-app"
 LOG_FILE="/home/cosigein/logs/updater.log"
 APP_SERVICE="app.service"
+# Obtiene el nombre de la rama actual para hacerlo más genérico
+GIT_BRANCH=$(sudo -u cosigein git -C $APP_DIR rev-parse --abbrev-ref HEAD)
 
 log() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') - [UPDATER] - $1" | tee -a $LOG_FILE
@@ -30,12 +32,16 @@ if [[ $GIT_OUTPUT == *"Your branch is behind"* ]]; then
     log "Deteniendo el servicio $APP_SERVICE..."
     systemctl stop $APP_SERVICE
 
-    log "Ejecutando 'git pull' como 'cosigein'..."
-    if ! sudo -u cosigein git pull; then
-        log "ERROR: 'git pull' falló. Se reintentará en el próximo arranque."
+    log "Forzando la actualización desde el repositorio remoto (git reset --hard)..."
+    # ESTE ES EL CAMBIO CLAVE: Se descartan cambios locales y se fuerza la actualización.
+    if ! sudo -u cosigein git fetch --all || ! sudo -u cosigein git reset --hard origin/$GIT_BRANCH; then
+        log "ERROR: El proceso de 'git fetch/reset' falló. Se reintentará en el próximo arranque."
         systemctl start $APP_SERVICE
         exit 1
     fi
+
+    log "Limpiando archivos no rastreados..."
+    sudo -u cosigein git clean -fdx
 
     log "Instalando/actualizando dependencias..."
     /home/cosigein/fire-truck-app/.venv/bin/pip install -r requirements.txt
