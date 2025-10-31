@@ -91,5 +91,5 @@ data_sources:
 
   gpio_rotativo:
     enabled: true
-    pin: 22
+    pin: 22 # Pin BCM 22 (BOARD 15)
     log_period_sec: 1
