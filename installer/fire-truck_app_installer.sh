@@ -64,7 +64,6 @@ log_fail() {
 }
 
 # --- Función para asegurar líneas en config.txt ---
-# Uso: ensure_config_line "patrón_a_buscar" "línea_completa_a_añadir" "comentario"
 ensure_config_line() {
     local pattern="$1"
     local line="$2"
@@ -72,7 +71,6 @@ ensure_config_line() {
     
     if ! grep -qE "^${pattern}" "${BOOT_CONFIG_FILE}"; then
         log_info "Añadiendo: ${line}"
-        # Añade un salto de línea antes del comentario si este existe
         if [ -n "$comment" ]; then
             echo "" >> "${BOOT_CONFIG_FILE}"
             echo "$comment" >> "${BOOT_CONFIG_FILE}"
@@ -90,36 +88,37 @@ ensure_config_line() {
 # --- PASO 0: Comprobaciones Previas ---
 log_step "Paso 0: Realizando comprobaciones previas..."
 
-# Comprobar si se ejecuta como root
 if [ "$(id -u)" -ne 0 ]; then
     log_fail "Este script debe ser ejecutado como root. Por favor, usa 'sudo'."
 fi
 
-# ### AÑADIDO ###: PASO DE INICIALIZACIÓN DE HARDWARE ESENCIAL
-# -----------------------------------------------------------------------------
+# --- PASO DE INICIALIZACIÓN: Habilitación de Hardware Esencial ---
 log_step "Paso de Inicialización: Habilitando señal de alimentación..."
 
-# Comprobamos si la herramienta raspi-gpio está disponible
+# Comprobamos si raspi-gpio está disponible. Si no, lo instalamos.
 if ! command -v raspi-gpio &> /dev/null; then
-    log_warn "La herramienta 'raspi-gpio' no se encuentra. Es parte del paquete 'raspi-config'."
-    log_fail "Asegúrate de estar en un sistema Raspberry Pi OS con las herramientas base."
+    log_warn "La herramienta 'raspi-gpio' no se encuentra."
+    log_info "Intentando instalar el paquete 'raspi-config' que la contiene..."
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update
+    apt-get install -y raspi-config
+    
+    # Verificamos de nuevo después de la instalación
+    if ! command -v raspi-gpio &> /dev/null; then
+        log_fail "La instalación de 'raspi-config' falló. No se pudo encontrar 'raspi-gpio'."
+    fi
+    log_ok "'raspi-config' instalado correctamente."
 fi
 
 log_info "Activando señal de 'keep-alive' para la fuente de alimentación en GPIO ${POWER_OK_GPIO} (Pin 32)."
 log_info "Configurando GPIO ${POWER_OK_GPIO} como salida y poniéndolo en estado ALTO (3.3V)..."
-# 'op' establece el modo a 'output'
-# 'dh' establece el nivel a 'drive high' (3.3V)
 raspi-gpio set ${POWER_OK_GPIO} op dh
 log_ok "Señal de alimentación habilitada."
-# -----------------------------------------------------------------------------
-# ### FIN DEL AÑADIDO ###
-
 
 # Obtener el directorio donde se encuentra el script
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 KEY_SRC_PATH="${SCRIPT_DIR}/deploy_key"
 
-# Comprobar si la clave de despliegue existe
 if [ ! -f "${KEY_SRC_PATH}" ]; then
     log_fail "No se encontró el archivo 'deploy_key' en el mismo directorio que el instalador."
 fi
@@ -139,7 +138,8 @@ log_step "Paso 2: Actualizando sistema e instalando dependencias..."
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get upgrade -y
-apt-get install -y git python3-pip python3-venv can-utils i2c-tools
+# Añadimos raspi-config para asegurar que está presente y actualizado
+apt-get install -y git python3-pip python3-venv can-utils i2c-tools raspi-config
 log_ok "Sistema y dependencias listos."
 
 
@@ -166,7 +166,6 @@ log_step "Paso 4: Instalando Deploy Key de Git..."
 KEY_DIR="/home/${TARGET_USER}/.ssh"
 KEY_DEST_PATH="${KEY_DIR}/id_ed25519"
 
-# Ejecutamos los comandos como el usuario final para asegurar permisos correctos
 sudo -u "${TARGET_USER}" bash << EOF
 set -e
 mkdir -p "${KEY_DIR}"
