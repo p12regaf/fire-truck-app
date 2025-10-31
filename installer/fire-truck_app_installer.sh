@@ -5,7 +5,7 @@
 # =============================================================================
 #
 #  Este script realiza una instalación completa en una Raspberry Pi:
-#  0. Habilita una señal de alimentación en GPIO 12 (3.3V).
+#  0. Habilita una señal de alimentación en GPIO 12 (3.3V) usando libgpiod.
 #  1. Comprueba que se ejecuta como root.
 #  2. Pide los datos necesarios (URL del repo, rama).
 #  3. Actualiza el sistema e instala todas las dependencias.
@@ -34,12 +34,13 @@ LOG_DIR="/home/${TARGET_USER}/logs"
 DATA_DIR="/home/${TARGET_USER}/datos"
 BOOT_CONFIG_FILE="/boot/firmware/config.txt"
 POWER_OK_GPIO=12 # Pin BCM 12 (BOARD 32) para la señal de alimentación
+GPIO_CHIP="gpiochip0" # El chip GPIO principal en casi todas las RPi (excepto Pi 5 que es gpiochip4)
 
 # --- Colores para la Salida ---
 C_HEADER='\033[95m'
 C_OKBLUE='\033[94m'
 C_OKCYAN='\033[96m'
-C_OKGREEN='\033[92m'
+C_OKGREEN='\032m'
 C_WARNING='\033[93m'
 C_FAIL='\033[91m'
 C_ENDC='\033[0m'
@@ -95,25 +96,31 @@ fi
 # --- PASO DE INICIALIZACIÓN: Habilitación de Hardware Esencial ---
 log_step "Paso de Inicialización: Habilitando señal de alimentación..."
 
-# Comprobamos si raspi-gpio está disponible. Si no, lo instalamos.
-if ! command -v raspi-gpio &> /dev/null; then
-    log_warn "La herramienta 'raspi-gpio' no se encuentra."
-    log_info "Intentando instalar el paquete 'raspi-config' que la contiene..."
+log_info "Usando la interfaz moderna libgpiod para el control de GPIO..."
+
+if ! command -v gpioset &> /dev/null; then
+    log_warn "La herramienta 'gpioset' no se encuentra."
+    log_info "Intentando instalar el paquete 'gpiod' que la contiene..."
     export DEBIAN_FRONTEND=noninteractive
     apt-get update
-    apt-get install -y raspi-config
-    
-    # Verificamos de nuevo después de la instalación
-    if ! command -v raspi-gpio &> /dev/null; then
-        log_fail "La instalación de 'raspi-config' falló. No se pudo encontrar 'raspi-gpio'."
+    apt-get install -y gpiod
+    hash -r
+    if ! command -v gpioset &> /dev/null; then
+        log_fail "La instalación de 'gpiod' falló. No se pudo encontrar 'gpioset'."
     fi
-    log_ok "'raspi-config' instalado correctamente."
+    log_ok "'gpiod' instalado correctamente."
 fi
 
-log_info "Activando señal de 'keep-alive' para la fuente de alimentación en GPIO ${POWER_OK_GPIO} (Pin 32)."
-log_info "Configurando GPIO ${POWER_OK_GPIO} como salida y poniéndolo en estado ALTO (3.3V)..."
-raspi-gpio set ${POWER_OK_GPIO} op dh
-log_ok "Señal de alimentación habilitada."
+log_info "Configurando GPIO ${POWER_OK_GPIO} en el chip ${GPIO_CHIP} a estado ALTO (3.3V)..."
+# Se intenta primero la sintaxis moderna (line=value). Si falla, se usa la sintaxis
+# antigua (line value) para máxima compatibilidad entre versiones de gpiod.
+# Se redirige el error del primer intento a /dev/null para una salida limpia.
+if ! gpioset "${GPIO_CHIP}" "${POWER_OK_GPIO}=1" 2>/dev/null; then
+    log_warn "La sintaxis moderna de gpioset falló. Intentando con la sintaxis antigua..."
+    gpioset "${GPIO_CHIP}" "${POWER_OK_GPIO}" 1
+fi
+log_ok "Señal de alimentación habilitada vía libgpiod."
+
 
 # Obtener el directorio donde se encuentra el script
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
@@ -138,8 +145,7 @@ log_step "Paso 2: Actualizando sistema e instalando dependencias..."
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get upgrade -y
-# Añadimos raspi-config para asegurar que está presente y actualizado
-apt-get install -y git python3-pip python3-venv can-utils i2c-tools raspi-config
+apt-get install -y git python3-pip python3-venv can-utils i2c-tools raspi-config gpiod
 log_ok "Sistema y dependencias listos."
 
 
