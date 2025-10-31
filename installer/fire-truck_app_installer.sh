@@ -5,6 +5,7 @@
 # =============================================================================
 #
 #  Este script realiza una instalación completa en una Raspberry Pi:
+#  0. Habilita una señal de alimentación en GPIO 12 (3.3V).
 #  1. Comprueba que se ejecuta como root.
 #  2. Pide los datos necesarios (URL del repo, rama).
 #  3. Actualiza el sistema e instala todas las dependencias.
@@ -32,6 +33,7 @@ APP_DIR="/home/${TARGET_USER}/fire-truck-app"
 LOG_DIR="/home/${TARGET_USER}/logs"
 DATA_DIR="/home/${TARGET_USER}/datos"
 BOOT_CONFIG_FILE="/boot/firmware/config.txt"
+POWER_OK_GPIO=12 # Pin BCM 12 (BOARD 32) para la señal de alimentación
 
 # --- Colores para la Salida ---
 C_HEADER='\033[95m'
@@ -93,6 +95,26 @@ if [ "$(id -u)" -ne 0 ]; then
     log_fail "Este script debe ser ejecutado como root. Por favor, usa 'sudo'."
 fi
 
+# ### AÑADIDO ###: PASO DE INICIALIZACIÓN DE HARDWARE ESENCIAL
+# -----------------------------------------------------------------------------
+log_step "Paso de Inicialización: Habilitando señal de alimentación..."
+
+# Comprobamos si la herramienta raspi-gpio está disponible
+if ! command -v raspi-gpio &> /dev/null; then
+    log_warn "La herramienta 'raspi-gpio' no se encuentra. Es parte del paquete 'raspi-config'."
+    log_fail "Asegúrate de estar en un sistema Raspberry Pi OS con las herramientas base."
+fi
+
+log_info "Activando señal de 'keep-alive' para la fuente de alimentación en GPIO ${POWER_OK_GPIO} (Pin 32)."
+log_info "Configurando GPIO ${POWER_OK_GPIO} como salida y poniéndolo en estado ALTO (3.3V)..."
+# 'op' establece el modo a 'output'
+# 'dh' establece el nivel a 'drive high' (3.3V)
+raspi-gpio set ${POWER_OK_GPIO} op dh
+log_ok "Señal de alimentación habilitada."
+# -----------------------------------------------------------------------------
+# ### FIN DEL AÑADIDO ###
+
+
 # Obtener el directorio donde se encuentra el script
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 KEY_SRC_PATH="${SCRIPT_DIR}/deploy_key"
@@ -106,7 +128,7 @@ log_ok "Comprobaciones previas superadas."
 
 # --- PASO 1: Recopilar Información ---
 log_step "Paso 1: Recopilando información necesaria..."
-read -p "Introduce la URL SSH de tu repositorio Git (ej. git@github.com:tu_usuario/fire-truck-app.git): " REPO_URL
+read -p "Introduce la URL SSH de tu repositorio Git (ej. git@github.com:p12regaf/fire-truck-app.git): " REPO_URL
 read -p "Introduce el nombre de la rama a desplegar (ej. main) [main]: " GIT_BRANCH
 GIT_BRANCH=${GIT_BRANCH:-main}
 log_ok "Información recopilada."
