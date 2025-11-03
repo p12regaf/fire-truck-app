@@ -65,6 +65,10 @@ data_sources:
     query_interval_sec: 0.2
     # Tiempo máximo en segundos para esperar una respuesta a una consulta.
     response_timeout_sec: 0.5
+    
+    # Intervalo en segundos para registrar los datos de CAN (muestreo).
+    # Un valor > 0 activa el muestreo periódico en lugar del registro en tiempo real.
+    log_interval_sec: 10
 
     # Lista de PGNs (Parameter Group Numbers) de J1939 a escuchar.
     # La aplicación filtrará y parseará solo los mensajes con estos PGNs.
