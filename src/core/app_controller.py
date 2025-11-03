@@ -28,6 +28,7 @@ class AppController:
         self.active_data_types = []
         self.latest_data = {}
         self.data_lock = threading.Lock()
+        self.log_line_counters = {} # Contador de líneas para los logs
         
         self.session_manager = SessionManager(config)
 
@@ -237,20 +238,35 @@ class AppController:
         while not self.shutdown_event.is_set():
             try:
                 data_packet = self.data_queue.get(timeout=1)
+                data_type = data_packet['type']
                 
                 with self.data_lock:
-                    self.latest_data[data_packet['type']] = data_packet
+                    self.latest_data[data_type] = data_packet
                 
                 # Formatear la línea de log
                 log_line = self._format_log_line(data_packet)
 
                 # Escribir en el archivo de log diario
-                log_file_path = self.session_manager.get_log_path(data_packet['type'])
+                log_file_path = self.session_manager.get_log_path(data_type)
                 try:
                     with open(log_file_path, 'a') as f:
                         f.write(log_line)
+                        
+                        if data_type == "estabilometro":
+                            # Inicializa el contador si no existe para este tipo de dato
+                            self.log_line_counters.setdefault("estabilometro", 0)
+                            
+                            # Incrementa el contador
+                            self.log_line_counters["estabilometro"] += 1
+                            
+                            # Si el contador llega a 10, escribe la marca de tiempo y lo resetea
+                            if self.log_line_counters["estabilometro"] >= 10:
+                                timestamp_line = f"{datetime.now().strftime('%H:%M:%S')}\n"
+                                f.write(timestamp_line)
+                                self.log_line_counters["estabilometro"] = 0
+
                 except Exception as e:
-                    log.error(f"No se pudo escribir en el log para {data_packet['type']}: {e}")
+                    log.error(f"No se pudo escribir en el log para {data_type}: {e}")
 
                 # Actualizar el archivo de tiempo real
                 self._update_realtime_file(data_packet['type'], log_line)
