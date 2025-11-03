@@ -125,6 +125,64 @@ def ensure_config_line(pattern, line, comment=None):
     except IOError as e:
         log_fail(f"Error de E/S al manejar {BOOT_CONFIG_FILE}: {e}")
 
+def configure_fallback_wifi():
+    """Añade una red Wi-Fi de respaldo con prioridad baja."""
+    log_step("Paso 2.5: Configurando Wi-Fi de respaldo (CSGWconfig03)...")
+    WPA_CONF_PATH = "/etc/wpa_supplicant/wpa_supplicant.conf"
+    FALLBACK_SSID = "CSGWconfig03"
+    FALLBACK_PSK = "12345678"
+
+    if not os.path.exists(WPA_CONF_PATH):
+        log_warn(f"No se encontró el archivo '{WPA_CONF_PATH}'. Omitiendo configuración de Wi-Fi.")
+        return
+
+    try:
+        with open(WPA_CONF_PATH, 'r') as f:
+            content = f.read()
+
+        # Comprobar si la red ya está configurada para no duplicarla
+        if f'ssid="{FALLBACK_SSID}"' in content:
+            log_info(f"La red Wi-Fi '{FALLBACK_SSID}' ya está configurada. Omitiendo.")
+            return
+
+        # Buscar prioridades existentes para asignar una inferior
+        priorities = re.findall(r'^\s*priority\s*=\s*(-?\d+)', content, re.MULTILINE)
+        existing_priorities = [int(p) for p in priorities]
+
+        if existing_priorities:
+            # Asignar una prioridad inferior a la más baja encontrada
+            new_priority = min(existing_priorities) - 1
+            log_info(f"Prioridad mínima existente encontrada: {min(existing_priorities)}.")
+        else:
+            # Si ninguna red tiene prioridad, todas tienen 0 por defecto.
+            # Asignamos 1 a la red de respaldo para que sea menos prioritaria.
+            # *Corrección*: No, un número más alto es más prioritario. Asignamos -1.
+            new_priority = -1
+            log_info("Ninguna red tiene prioridad explícita. Se asignará una prioridad baja por defecto.")
+
+        log_info(f"Asignando prioridad '{new_priority}' a la red de respaldo '{FALLBACK_SSID}'.")
+
+        # Construir el nuevo bloque de red
+        fallback_network_block = f"""
+network={{
+    ssid="{FALLBACK_SSID}"
+    psk="{FALLBACK_PSK}"
+    key_mgmt=WPA-PSK
+    priority={new_priority}
+}}
+"""
+        # Añadir el bloque al final del archivo
+        with open(WPA_CONF_PATH, 'a') as f:
+            f.write(fallback_network_block)
+
+        log_ok(f"Red Wi-Fi de respaldo '{FALLBACK_SSID}' añadida correctamente.")
+
+    except (IOError, PermissionError) as e:
+        log_fail(f"No se pudo modificar el archivo de configuración de Wi-Fi: {e}")
+    except Exception as e:
+        log_fail(f"Error inesperado al configurar el Wi-Fi de respaldo: {e}")
+
+
 def main():
     """Función principal del script de instalación."""
     
@@ -182,6 +240,8 @@ def main():
     run_command(["apt-get", "upgrade", "-y"], env=env)
     run_command(["apt-get", "install", "-y", "git", "python3-pip", "python3-venv", "can-utils", "i2c-tools"], env=env)
     log_ok("Sistema y dependencias listos.")
+
+    configure_fallback_wifi()
 
     # --- PASO 3: Creación de Usuario y Directorios ---
     log_step("Paso 3: Configurando usuario y directorios...")
