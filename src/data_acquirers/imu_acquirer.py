@@ -34,35 +34,53 @@ class IMUAcquirer(BaseAcquirer):
             return False
 
     def _parse_stabilometer_data(self, line: str) -> Optional[dict]:
-        """Parsea la trama del estabilómetro, convirtiendo valores a float si es posible."""
+        """
+        Parsea la trama del estabilómetro. Primero comprueba si es una cabecera
+        y solo después valida el número de campos para evitar falsos warnings.
+        """
         try:
-            values = [v.strip() for v in line.split(';') if v.strip()]
+            # --- INICIO DE LA CORRECCIÓN ---
+
+            # Dividimos la línea por el delimitador y eliminamos espacios en blanco.
+            values = [v.strip() for v in line.split(';')]
+
+            # Es común que las tramas terminen con ';', lo que genera un campo vacío al final. Lo eliminamos.
+            if values and not values[-1]:
+                values.pop()
+
+            # 1. PRIMERO, comprobamos si es una línea de datos o una cabecera.
+            #    Intentamos convertir el primer valor a float. Si falla, es una cabecera/texto.
+            try:
+                # Usamos `values[0]` para la comprobación.
+                float(values[0])
+            except (ValueError, IndexError):
+                # Si falla (ValueError) o la línea está vacía (IndexError),
+                # la consideramos una cabecera o basura y la ignoramos silenciosamente.
+                log.info(f"Línea ignorada (posible cabecera o línea vacía): {line}")
+                return None
+
+            # 2. AHORA, si sabemos que es una línea de datos, validamos que tenga el número correcto de valores.
             if len(values) != self.EXPECTED_VALUES:
-                log.warning(f"Trama con número incorrecto de valores. "
+                log.warning(f"Trama de datos con número incorrecto de valores. "
                             f"Esperados: {self.EXPECTED_VALUES}, Recibidos: {len(values)}. Trama: '{line}'")
                 return None
             
-            # Intentar convertir todos los valores a float. Si falla el primero,
-            # probablemente es una cabecera, así que la ignoramos.
-            try:
-                float(values[0])
-            except ValueError:
-                log.info(f"Línea ignorada (posible cabecera): {line}")
-                return None
-
-            # Construir el diccionario convirtiendo cada valor
+            # 3. Si todo es correcto, construimos el diccionario.
             data_dict = {}
             for key, value_str in zip(self.DATA_KEYS, values):
                 try:
+                    # Intentamos convertir cada valor a float.
                     data_dict[key] = float(value_str)
                 except ValueError:
-                    # Si un valor no es numérico, lo guardamos como string
+                    # Si algún valor intermedio no es numérico, lo guardamos como texto.
                     data_dict[key] = value_str 
             
             return data_dict
 
+            # --- FIN DE LA CORRECCIÓN ---
+
         except Exception as e:
-            log.error(f"Error al parsear la línea del estabilómetro '{line}': {e}")
+            log.error(f"Error inesperado al parsear la línea del estabilómetro '{line}': {e}")
             return None
 
     def _acquire_data(self):
