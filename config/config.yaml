@@ -3,7 +3,7 @@
 # -----------------------------------------------------------------
 system:
   device_user: "cosigein"
-  device_number: "001"
+  device_number: "000"
   log_level: "DEBUG"       # DEBUG, INFO, WARNING, ERROR, CRITICAL
   start_with_gui: false 
 
