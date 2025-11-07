@@ -10,7 +10,7 @@ log = logging.getLogger(__name__)
 class FTPTransmitter(threading.Thread):
     """
     Gestiona la subida de archivos al servidor FTP con intervalos separados.
-    - Sube archivos de log de días anteriores (.log) periódicamente.
+    - Sube archivos de log de días anteriores (.txt) periódicamente.
     - Sube archivos de estado en tiempo real (_RealTime.txt) con mayor frecuencia.
     """
 
@@ -110,7 +110,7 @@ class FTPTransmitter(threading.Thread):
         today_str = datetime.now().strftime('%Y%m%d')
         
         def log_filter(filename):
-            if not filename.endswith(".log"):
+            if not filename.endswith(".txt"):
                 return False
             try:
                 file_date_str = filename.split('_')[-1].split('.')[0]

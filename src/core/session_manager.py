@@ -111,7 +111,7 @@ class SessionManager:
         """Obtiene la ruta del archivo de log diario para un tipo de dato."""
         folder_name = self._get_folder_name(data_type)
         file_prefix = self._get_file_prefix_name(data_type)
-        filename = f"{file_prefix}_{self.device_name}_{self.today_str_ymd}.log"
+        filename = f"{file_prefix}_{self.device_name}_{self.today_str_ymd}.txt"
         return os.path.join(self.data_root, folder_name, filename)
 
     def get_realtime_log_path(self, data_type: str) -> str:
