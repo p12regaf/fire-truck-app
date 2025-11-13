@@ -326,15 +326,24 @@ def main():
         for f in files:
             shutil.chown(os.path.join(root, f), user=uid, group=gid)
     log_ok("Usuario y directorios configurados.")
+
     log_step("Limpiando instalación anterior...")
     old_programs_dir = os.path.join(HOME_DIR, "Documentos/.PROGRAMS")
     if os.path.exists(old_programs_dir):
-        log_info(f"Eliminando directorio anterior: {old_programs_dir}")
-        shutil.rmtree(old_programs_dir)
-        log_ok("Directorio anterior eliminado correctamente.")
+        try:
+            user_choice = input(f"¿Deseas eliminar el directorio anterior ({old_programs_dir})? (s/n) [s]: ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            user_choice = "s"
+        
+        if user_choice in ("s", "y", "si", "yes", ""):
+            log_info(f"Eliminando directorio anterior: {old_programs_dir}")
+            shutil.rmtree(old_programs_dir)
+            log_ok("Directorio anterior eliminado correctamente.")
+        else:
+            log_info("Se omitió la eliminación del directorio anterior.")
     else:
         log_info("No se encontró directorio anterior. Continuando...")
-
+        
 
     log_step("Paso 4: Instalando Deploy Key de Git...")
     key_dir = os.path.join(HOME_DIR, ".ssh")
