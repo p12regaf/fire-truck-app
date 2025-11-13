@@ -44,12 +44,6 @@ DATA_DIR = os.path.join(HOME_DIR, "datos")
 BOOT_CONFIG_FILE = "/boot/firmware/config.txt"
 POWER_OK_GPIO = 12  # Pin BCM 12 (BOARD 32) para la señal de alimentación
 
-# --- Wi-Fi de Respaldo ---
-FALLBACK_SSID = "CSGWconfig03"
-FALLBACK_PSK = "12345678"
-default_fallback_ssid = FALLBACK_SSID
-default_fallback_psk = FALLBACK_PSK
-
 # --- Colores para la Salida ---
 C_HEADER = '\033[95m'
 C_OKBLUE = '\033[94m'
