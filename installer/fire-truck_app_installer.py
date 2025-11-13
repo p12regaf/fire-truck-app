@@ -44,6 +44,12 @@ DATA_DIR = os.path.join(HOME_DIR, "datos")
 BOOT_CONFIG_FILE = "/boot/firmware/config.txt"
 POWER_OK_GPIO = 12  # Pin BCM 12 (BOARD 32) para la señal de alimentación
 
+# --- Wi-Fi de Respaldo ---
+FALLBACK_SSID = "CSGWconfig03"
+FALLBACK_PSK = "12345678"
+default_fallback_ssid = FALLBACK_SSID
+default_fallback_psk = FALLBACK_PSK
+
 # --- Colores para la Salida ---
 C_HEADER = '\033[95m'
 C_OKBLUE = '\033[94m'
@@ -142,7 +148,18 @@ def configure_fallback_wifi():
     else:
         FALLBACK_SSID = default_fallback_ssid
         log_info(f"Usando SSID por defecto: {FALLBACK_SSID}")
-    FALLBACK_PSK = "12345678"
+
+    default_fallback_psk = "12345678"
+    try:
+        psk_input = input("Introduce la contraseña de la red de respaldo [12345678]: ").strip()
+    except (EOFError, KeyboardInterrupt):
+        psk_input = ""
+    if psk_input:
+        FALLBACK_PSK = psk_input
+        log_info("Contraseña de respaldo establecida a la proporcionada por el usuario.")
+    else:
+        FALLBACK_PSK = default_fallback_psk
+        log_info(f"Usando contraseña por defecto: {default_fallback_psk}")
 
     if not os.path.exists(WPA_CONF_PATH):
         log_warn(f"No se encontró el archivo '{WPA_CONF_PATH}'. Omitiendo configuración de Wi-Fi.")
