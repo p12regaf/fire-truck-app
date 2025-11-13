@@ -198,7 +198,7 @@ def main():
 
     log_step("Parando servicios existentes...")
     # ! Añadir todos los servicios que deban ser detenidos antes de la instalación
-    services_to_stop = ["alarma.service", "apagar.service", "reinicio.service"]
+    services_to_stop = ["alarma.service", "apagar.service", "reinicio.service", "app.service", "updater.service"]
     for service in services_to_stop:
         try:
             proc = subprocess.run(
@@ -343,7 +343,7 @@ def main():
             log_info("Se omitió la eliminación del directorio anterior.")
     else:
         log_info("No se encontró directorio anterior. Continuando...")
-        
+
 
     log_step("Paso 4: Instalando Deploy Key de Git...")
     key_dir = os.path.join(HOME_DIR, ".ssh")
