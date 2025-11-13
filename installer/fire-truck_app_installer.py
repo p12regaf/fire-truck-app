@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 
+# ! TODO: Asegurarse de que el dispositivo se conectará a internet después de la instalación.
+
 # =============================================================================
 #  INSTALADOR AUTOMÁTICO PARA fire-truck-app (VERSIÓN PYTHON)
 # =============================================================================
@@ -128,7 +130,18 @@ def configure_fallback_wifi():
     """Añade una red Wi-Fi de respaldo con prioridad baja."""
     log_step("Paso 2.5: Configurando Wi-Fi de respaldo (CSGWconfig03)...")
     WPA_CONF_PATH = "/etc/wpa_supplicant/wpa_supplicant.conf"
-    FALLBACK_SSID = "CSGWconfig03"
+    # ! TODO: REVISAR QUE ESTO FUNCIONE CORRECTAMENTE.
+    default_fallback_ssid = "CSGWconfig03"
+    try:
+        ssid_input = input(f"Introduce SSID de la red de respaldo [{default_fallback_ssid}]: ").strip()
+    except (EOFError, KeyboardInterrupt):
+        ssid_input = ""
+    if ssid_input:
+        FALLBACK_SSID = ssid_input
+        log_info(f"SSID de respaldo establecido a: {FALLBACK_SSID}")
+    else:
+        FALLBACK_SSID = default_fallback_ssid
+        log_info(f"Usando SSID por defecto: {FALLBACK_SSID}")
     FALLBACK_PSK = "12345678"
 
     if not os.path.exists(WPA_CONF_PATH):
@@ -172,6 +185,34 @@ def main():
     if os.geteuid() != 0:
         log_fail("Este script debe ser ejecutado como root. Por favor, usa 'sudo'.")
 
+    log_step("Parando servicios existentes...")
+    # ! Añadir todos los servicios que deban ser detenidos antes de la instalación
+    services_to_stop = ["alarma.service", "apagar.service", "reinicio.service"]
+    for service in services_to_stop:
+        try:
+            proc = subprocess.run(
+                ["systemctl", "stop", service],
+                capture_output=True,
+                text=True
+            )
+            if proc.returncode == 0:
+                log_info(f"Servicio '{service}' detenido correctamente.")
+            else:
+                stderr = (proc.stderr or "").lower()
+                stdout = (proc.stdout or "").lower()
+                # Detectar unidades no encontradas o mensajes comunes de error
+                if ("could not be found" in stderr or "not-found" in stderr or
+                        "not found" in stderr or "unit" in stderr and "could not" in stderr):
+                    log_warn(f"Servicio '{service}' no encontrado. Se omite.")
+                else:
+                    log_warn(f"Fallo al detener '{service}' (code={proc.returncode}). "
+                             f"STDOUT: {stdout.strip()} STDERR: {stderr.strip()}")
+        except FileNotFoundError:
+            log_warn("systemctl no encontrado en este sistema. No se pudieron detener servicios con systemctl.")
+            break
+        except Exception as e:
+            log_warn(f"Error inesperado al detener '{service}': {e}")
+
     log_step("Paso de Inicialización: Habilitando señal de alimentación...")
     try:
         import RPi.GPIO as GPIO
@@ -204,7 +245,9 @@ def main():
     log_ok("Comprobaciones previas superadas.")
 
     log_step("Paso 1: Recopilando información necesaria...")
-    repo_url = input("Introduce la URL SSH de tu repositorio Git (ej. git@github.com:user/repo.git): ")
+    repo_url = input("Introduce la URL SSH de tu repositorio Git (git@github.com:p12regaf/fire-truck-app.git): ")
+    if not repo_url:
+        repo_url = "git@github.com:p12regaf/fire-truck-app.git"
     git_branch = input("Introduce el nombre de la rama a desplegar (ej. main) [main]: ")
     if not git_branch:
         git_branch = "main"
@@ -223,11 +266,29 @@ def main():
     env = os.environ.copy()
     env["DEBIAN_FRONTEND"] = "noninteractive"
     run_command(["apt-get", "update"], env=env)
-    run_command(["apt-get", "upgrade", "-y"], env=env)
+
+    # Preguntar si se desea hacer un upgrade completo (puede tardar mucho)
+    try:
+        choice = input("¿Deseas ejecutar 'apt-get upgrade -y' ahora? Esto puede tardar mucho. (s/n) [n]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        choice = "n"
+    if choice in ("s", "y", "si", "yes"):
+        log_step("Ejecutando 'apt-get upgrade -y'...")
+        run_command(["apt-get", "upgrade", "-y"], env=env)
+        log_ok("Upgrade completado.")
+    else:
+        log_info("Se omitió 'apt-get upgrade'.")
     run_command(["apt-get", "install", "-y", "git", "python3-pip", "python3-venv", "can-utils", "i2c-tools"], env=env)
     log_ok("Sistema y dependencias listos.")
 
-    configure_fallback_wifi()
+    try:
+        wifi_choice = input("¿Deseas configurar la red Wi-Fi de respaldo ahora? (s/n) [n]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        wifi_choice = "n"
+    if wifi_choice in ("s", "y", "si", "yes"):
+        configure_fallback_wifi()
+    else:
+        log_info("Se omitió la configuración de la red Wi-Fi de respaldo.")
 
     log_step("Paso 3: Configurando usuario y directorios...")
     try:
@@ -254,6 +315,15 @@ def main():
         for f in files:
             shutil.chown(os.path.join(root, f), user=uid, group=gid)
     log_ok("Usuario y directorios configurados.")
+    log_step("Limpiando instalación anterior...")
+    old_programs_dir = os.path.join(HOME_DIR, "Documentos/.PROGRAMS")
+    if os.path.exists(old_programs_dir):
+        log_info(f"Eliminando directorio anterior: {old_programs_dir}")
+        shutil.rmtree(old_programs_dir)
+        log_ok("Directorio anterior eliminado correctamente.")
+    else:
+        log_info("No se encontró directorio anterior. Continuando...")
+
 
     log_step("Paso 4: Instalando Deploy Key de Git...")
     key_dir = os.path.join(HOME_DIR, ".ssh")
@@ -285,10 +355,29 @@ def main():
     shutil.chown(known_hosts_path, user=uid, group=gid)
     log_ok("Deploy Key instalada correctamente.")
 
+
     log_step(f"Paso 5: Configurando periféricos en {BOOT_CONFIG_FILE}...")
     ensure_config_line("dtparam=i2c_arm=", "dtparam=i2c_arm=on", "# Habilitar I2C y SPI")
     ensure_config_line("dtparam=spi=", "dtparam=spi=on")
-    ensure_config_line("dtoverlay=mcp2515-can0", "dtoverlay=mcp2515-can0,oscillator=16000000,interrupt=23", "# Habilitar CAN bus (fire-truck-app)")
+
+    log_step("Configurando módulo CAN...")
+    try:
+        can_choice = input("¿Deseas configurar el módulo CAN? (antiguo/nuevo/no) [no]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        can_choice = "no"
+    
+    if can_choice in ("a", "o", "antiguo", "old"):
+        # TODO: Verificar si el interrupt 25 es correcto para el módulo antiguo
+        can_config = "dtoverlay=mcp2515-can0,oscillator=16000000,interrupt=25"
+        log_info("Configurando CAN con interrupt=25 (módulo antiguo).")
+        ensure_config_line("dtoverlay=mcp2515-can0", can_config, "# Habilitar CAN bus (fire-truck-app)")
+    elif can_choice in ("nuevo", "new"):
+        # TODO: Verificar si el interrupt 23 es correcto para el módulo nuevo
+        can_config = "dtoverlay=mcp2515-can0,oscillator=16000000,interrupt=23"
+        log_info("Configurando CAN con interrupt=23 (módulo nuevo).")
+        ensure_config_line("dtoverlay=mcp2515-can0", can_config, "# Habilitar CAN bus (fire-truck-app)")
+    else:
+        log_info("Se omitió la configuración del módulo CAN.")
     ensure_config_line("dtoverlay=i2c-rtc,ds3231", "dtoverlay=i2c-rtc,ds3231", "# Habilitar RTC DS3231 (fire-truck-app)")
     ensure_config_line("enable_uart=", "enable_uart=1", "# Habilitar UART y deshabilitar Bluetooth (fire-truck-app)")
     ensure_config_line("dtoverlay=disable-bt", "dtoverlay=disable-bt")
@@ -301,6 +390,7 @@ def main():
         log_warn(f"No se pudo remover fake-hwclock (quizás ya no estaba instalado): {e.stderr}")
     log_ok("Configuración de hardware completada.")
 
+
     log_step("Paso 6: Clonando repositorio de la aplicación...")
     if os.path.exists(os.path.join(APP_DIR, ".git")):
         log_warn("El directorio de la aplicación ya existe. Se forzará la actualización.")
@@ -310,6 +400,7 @@ def main():
     else:
         run_command(["git", "clone", "--branch", git_branch, repo_url, APP_DIR], as_user=TARGET_USER)
     log_ok(f"Repositorio clonado/actualizado en {APP_DIR}.")
+
 
     log_step("Paso 7: Configurando ID de dispositivo en config.yaml...")
     CONFIG_YAML_PATH = os.path.join(APP_DIR, "config", "config.yaml")
@@ -333,6 +424,7 @@ def main():
     except (IOError, FileNotFoundError) as e:
         log_fail(f"No se pudo leer o escribir en {CONFIG_YAML_PATH}: {e}")
 
+
     log_step("Paso 8: Configurando entorno virtual y dependencias...")
     venv_path = os.path.join(APP_DIR, ".venv")
     pip_path = os.path.join(venv_path, "bin/pip")
@@ -342,6 +434,7 @@ def main():
     run_command([pip_path, "install", "-r", requirements_path], as_user=TARGET_USER)
     log_ok("Entorno Python listo.")
     
+
     log_step("Paso 9: Estableciendo permisos de sistema...")
     log_info("Configurando sudo sin contraseña para shutdown/reboot...")
     sudoers_file = "/etc/sudoers.d/99-fire-truck-app"
@@ -355,6 +448,7 @@ def main():
         st = os.stat(script_to_exec)
         os.chmod(script_to_exec, st.st_mode | stat.S_IEXEC)
     log_ok("Permisos establecidos.")
+
 
     log_step("Paso 10: Instalando servicios systemd...")
     services = ["app.service", "updater.service"]
@@ -376,7 +470,7 @@ def main():
     log_warn("Es NECESARIO reiniciar el sistema para aplicar los cambios de hardware y red.")
     
     reboot_choice = input("¿Deseas reiniciar la Raspberry Pi ahora? (s/n): ").lower()
-    if reboot_choice == 's':
+    if reboot_choice in ("s", "y", "si", "yes"):
         log_info("Reiniciando el sistema ahora...")
         run_command(["reboot"])
     else:
