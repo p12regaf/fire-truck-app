@@ -128,32 +128,31 @@ def ensure_config_line(pattern, line, comment=None):
 
 def configure_fallback_wifi():
     """Añade una red Wi-Fi de respaldo con prioridad baja."""
-    log_step("Paso 2.5: Configurando Wi-Fi de respaldo (CSGWconfig03)...")
+    log_step("Paso 2.5: Configurando Wi-Fi de respaldo...")
     WPA_CONF_PATH = "/etc/wpa_supplicant/wpa_supplicant.conf"
-    # ! TODO: REVISAR QUE ESTO FUNCIONE CORRECTAMENTE.
+    
     default_fallback_ssid = "CSGWconfig03"
     try:
         ssid_input = input(f"Introduce SSID de la red de respaldo [{default_fallback_ssid}]: ").strip()
     except (EOFError, KeyboardInterrupt):
         ssid_input = ""
-    if ssid_input:
-        FALLBACK_SSID = ssid_input
-        log_info(f"SSID de respaldo establecido a: {FALLBACK_SSID}")
-    else:
-        FALLBACK_SSID = default_fallback_ssid
-        log_info(f"Usando SSID por defecto: {FALLBACK_SSID}")
+        
+    # Usar el valor del usuario si lo proporciona, si no, el por defecto.
+    final_ssid = ssid_input or default_fallback_ssid
+    log_info(f"SSID de respaldo establecido a: {final_ssid}")
 
     default_fallback_psk = "12345678"
     try:
-        psk_input = input("Introduce la contraseña de la red de respaldo [12345678]: ").strip()
+        psk_input = input(f"Introduce la contraseña de la red de respaldo [{default_fallback_psk}]: ").strip()
     except (EOFError, KeyboardInterrupt):
         psk_input = ""
+        
+    # Usar la contraseña del usuario si la proporciona, si no, la por defecto.
+    final_psk = psk_input or default_fallback_psk
     if psk_input:
-        FALLBACK_PSK = psk_input
         log_info("Contraseña de respaldo establecida a la proporcionada por el usuario.")
     else:
-        FALLBACK_PSK = default_fallback_psk
-        log_info(f"Usando contraseña por defecto: {default_fallback_psk}")
+        log_info(f"Usando contraseña por defecto.")
 
     if not os.path.exists(WPA_CONF_PATH):
         log_warn(f"No se encontró el archivo '{WPA_CONF_PATH}'. Omitiendo configuración de Wi-Fi.")
@@ -163,19 +162,20 @@ def configure_fallback_wifi():
         with open(WPA_CONF_PATH, 'r') as f:
             content = f.read()
 
-        if f'ssid="{FALLBACK_SSID}"' in content:
-            log_info(f"La red Wi-Fi '{FALLBACK_SSID}' ya está configurada. Omitiendo.")
+        # Usar las variables locales 'final_ssid' y 'final_psk'
+        if f'ssid="{final_ssid}"' in content:
+            log_info(f"La red Wi-Fi '{final_ssid}' ya está configurada. Omitiendo.")
             return
 
         priorities = re.findall(r'^\s*priority\s*=\s*(-?\d+)', content, re.MULTILINE)
         existing_priorities = [int(p) for p in priorities]
         new_priority = (min(existing_priorities) - 1) if existing_priorities else -1
-        log_info(f"Asignando prioridad '{new_priority}' a la red de respaldo '{FALLBACK_SSID}'.")
+        log_info(f"Asignando prioridad '{new_priority}' a la red de respaldo '{final_ssid}'.")
 
         fallback_network_block = f"""
 network={{
-    ssid="{FALLBACK_SSID}"
-    psk="{FALLBACK_PSK}"
+    ssid="{final_ssid}"
+    psk="{final_psk}"
     key_mgmt=WPA-PSK
     priority={new_priority}
 }}
@@ -183,7 +183,7 @@ network={{
         with open(WPA_CONF_PATH, 'a') as f:
             f.write(fallback_network_block)
 
-        log_ok(f"Red Wi-Fi de respaldo '{FALLBACK_SSID}' añadida correctamente.")
+        log_ok(f"Red Wi-Fi de respaldo '{final_ssid}' añadida correctamente.")
     except (IOError, PermissionError) as e:
         log_fail(f"No se pudo modificar el archivo de configuración de Wi-Fi: {e}")
     except Exception as e:

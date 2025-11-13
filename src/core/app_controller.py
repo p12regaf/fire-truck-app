@@ -88,27 +88,29 @@ class AppController:
 
     def _setup_gpio_pins(self):
         """
-        Configura todos los pines GPIO de los monitores de forma centralizada
+        Configura todos los pines GPIO de los monitores y acquirers de forma centralizada
         para evitar condiciones de carrera.
         """
         log.info("Configurando pines GPIO de forma centralizada...")
         try:
             GPIO.setmode(GPIO.BCM)
-            # Desactivar advertencias sobre canales en uso
-            GPIO.setwarnings(False) 
+            GPIO.setwarnings(False)
 
-            # Configurar cada pin que se va a usar
             for worker in self.workers:
-                if isinstance(worker, (PowerMonitor, AlarmMonitor, RebootMonitor)):
+                if isinstance(worker, (PowerMonitor, AlarmMonitor)):
                     if worker.pin is not None:
-                        if isinstance(worker, RebootMonitor):
-                            # El RebootMonitor actúa como un actuador, estableciendo una señal de 'OK'
-                            log.info(f"Configurando pin {worker.pin} para {worker.name} como SALIDA.")
-                            GPIO.setup(worker.pin, GPIO.OUT)
-                        else:
-                            # Los otros monitores son sensores de entrada
-                            log.info(f"Configurando pin {worker.pin} para {worker.name} como ENTRADA con pull_up_down={worker.pull_up_down}")
-                            GPIO.setup(worker.pin, GPIO.IN, pull_up_down=worker.pull_up_down)
+                        log.info(f"Configurando pin {worker.pin} para {worker.name} como ENTRADA con pull_up_down={worker.pull_up_down}")
+                        GPIO.setup(worker.pin, GPIO.IN, pull_up_down=worker.pull_up_down)
+                
+                elif isinstance(worker, RebootMonitor):
+                    if worker.pin is not None:
+                        log.info(f"Configurando pin {worker.pin} para {worker.name} como SALIDA.")
+                        GPIO.setup(worker.pin, GPIO.OUT)
+
+                elif isinstance(worker, GPIOAcquirer):
+                    if worker.pin is not None:
+                        log.info(f"Configurando pin {worker.pin} para {worker.name} como ENTRADA con pull_down.")
+                        GPIO.setup(worker.pin, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
             
             log.info("Configuración centralizada de GPIO completada.")
         except Exception as e:

@@ -18,15 +18,8 @@ class GPIOAcquirer(BaseAcquirer):
         if self.pin is None:
             log.critical("FATAL: No se ha especificado un pin GPIO para el sensor rotativo en la configuración.")
             return False
-        
-        try:
-            GPIO.setmode(GPIO.BCM)
-            GPIO.setup(self.pin, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
-            log.info(f"Configurado pin GPIO {self.pin} para sensor rotativo.")
-            return True
-        except (RuntimeError, ValueError) as e:
-            log.critical(f"FATAL: Error al configurar GPIO: {e}. ¿Estás ejecutando como root o tienes permisos?")
-            return False
+        log.info(f"Pin GPIO {self.pin} para sensor rotativo ya configurado centralmente.")
+        return True
 
     def _acquire_data(self):
         self.shutdown_event.wait(self.period)
