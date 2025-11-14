@@ -345,7 +345,7 @@ def main():
         run_command(["usermod", "-a", "-G", "sudo,gpio,i2c,dialout", TARGET_USER])
     except KeyError:
         log_info(f"Creando usuario '{TARGET_USER}'...")
-        run_command(["useradd", "-m", "-s", "/bin/bash", "-G", "sudo,gpio,i2c,dialout", TARGET_USER])
+        run_command(["useradd", "-m", "-s", "/bin/bash", "-U", "-G", "sudo,gpio,i2c,dialout", TARGET_USER])
         log_warn(f"¡ACCIÓN REQUERIDA! Se ha creado el usuario '{TARGET_USER}'.")
         log_warn(f"Por favor, establece una contraseña para él ejecutando 'sudo passwd {TARGET_USER}' después.")
 
