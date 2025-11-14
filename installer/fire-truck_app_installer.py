@@ -423,11 +423,18 @@ def main():
 
 
     log_step("Paso 7: Configurando ID de dispositivo en config.yaml...")
+    TEMPLATE_CONFIG_PATH = os.path.join(APP_DIR, "config", "config.yaml.template")
     CONFIG_YAML_PATH = os.path.join(APP_DIR, "config", "config.yaml")
     try:
+        # 1. Copiar la plantilla para crear el archivo de configuración local
+        log_info(f"Copiando plantilla de configuración a '{CONFIG_YAML_PATH}'...")
+        shutil.copy(TEMPLATE_CONFIG_PATH, CONFIG_YAML_PATH)
+
+        # 2. Leer el nuevo archivo de configuración local
         with open(CONFIG_YAML_PATH, 'r') as f:
             config_content = f.read()
         
+        # 3. Modificar el contenido con el ID del dispositivo
         new_config_content = re.sub(
             r'(\s*device_number:\s*")[^"]*(")',
             fr'\g<1>{device_id}\g<2>',
@@ -435,14 +442,17 @@ def main():
         )
         
         if new_config_content == config_content:
-            log_warn("No se encontró el campo 'device_number' en config.yaml. No se pudo actualizar el ID.")
+            log_warn("No se encontró el campo 'device_number' en la plantilla. No se pudo actualizar el ID.")
         else:
+            # 4. Escribir los cambios en el archivo de configuración local
             with open(CONFIG_YAML_PATH, 'w') as f:
                 f.write(new_config_content)
-            log_ok("El archivo config.yaml ha sido actualizado con el ID de equipo.")
+            log_ok("El archivo config.yaml ha sido creado y actualizado con el ID de equipo.")
             
-    except (IOError, FileNotFoundError) as e:
-        log_fail(f"No se pudo leer o escribir en {CONFIG_YAML_PATH}: {e}")
+    except FileNotFoundError:
+        log_fail(f"No se encontró el archivo de plantilla de configuración en '{TEMPLATE_CONFIG_PATH}'. ¿Está en el repositorio?")
+    except (IOError, shutil.Error) as e:
+        log_fail(f"No se pudo crear o modificar {CONFIG_YAML_PATH}: {e}")
 
 
     log_step("Paso 8: Configurando entorno virtual y dependencias...")
