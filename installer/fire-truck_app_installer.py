@@ -193,6 +193,19 @@ network={{
 
 def main():
     """Función principal del script de instalación."""
+
+    # Confirmación sobre conectividad posterior a la instalación
+    log_step("Comprobación previa: conexión a Internet después de la instalación")
+    try:
+        conn_choice = input("¿Estás seguro de que el dispositivo tendrá conexión a Internet después de ejecutar este instalador? (s/n) [s]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        conn_choice = "n"
+
+    if conn_choice in ("n", "no"):
+        log_warn("Instalación cancelada: verifica la conectividad de red antes de ejecutar el instalador.")
+        sys.exit(0)
+    else:
+        log_info("Continuando. Se asumirá que habrá conexión a Internet una vez finalice la instalación.")
     
     log_step("Paso 0: Realizando comprobaciones previas...")
     if os.geteuid() != 0:
@@ -282,6 +295,19 @@ def main():
             break
         else:
             print(f"{C_WARNING}Entrada inválida. Por favor, introduce exactamente 3 números.{C_ENDC}")
+
+    rotary_pin = None
+    DEFAULT_ROTARY_PIN = "22"
+    while True:
+        user_input = input(f"Introduce el pin BCM para el rotativo (ej. {DEFAULT_ROTARY_PIN}) [{DEFAULT_ROTARY_PIN}]: ").strip()
+        if not user_input:
+            rotary_pin = DEFAULT_ROTARY_PIN
+            break
+        if user_input.isdigit():
+            rotary_pin = user_input
+            break
+        else:
+            print(f"{C_WARNING}Entrada inválida. Por favor, introduce un número de pin válido.{C_ENDC}")
     log_ok("Información recopilada.")
 
     log_step("Paso 2: Actualizando sistema e instalando dependencias...")
@@ -455,10 +481,12 @@ def main():
         if new_config_content == config_content:
             log_warn("No se encontró el campo 'device_number' en la plantilla. No se pudo actualizar el ID.")
         else:
-            # 4. Escribir los cambios en el archivo de configuración local
-            with open(CONFIG_YAML_PATH, 'w') as f:
-                f.write(new_config_content)
-            log_ok("El archivo config.yaml ha sido creado y actualizado con el ID de equipo.")
+            log_info(f"ID de dispositivo establecido a '{device_id}'.")
+
+        # 4. Escribir los cambios en el archivo de configuración local
+        with open(CONFIG_YAML_PATH, 'w') as f:
+            f.write(new_config_content)
+        log_ok("El archivo config.yaml ha sido creado y actualizado con el ID de equipo.")
             
     except FileNotFoundError:
         log_fail(f"No se encontró el archivo de plantilla de configuración en '{TEMPLATE_CONFIG_PATH}'. ¿Está en el repositorio?")
