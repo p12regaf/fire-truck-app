@@ -41,7 +41,9 @@ HOME_DIR = f"/home/{TARGET_USER}"
 APP_DIR = os.path.join(HOME_DIR, "fire-truck-app")
 LOG_DIR = os.path.join(HOME_DIR, "logs")
 DATA_DIR = os.path.join(HOME_DIR, "datos")
-BOOT_CONFIG_FILE = "/boot/firmware/config.txt"
+BOOT_CONFIG_PRIMARY_PATH = "/boot/firmware/config.txt"
+BOOT_CONFIG_FALLBACK_PATH = "/boot/config.txt" 
+BOOT_CONFIG_FILE = "" 
 POWER_OK_GPIO = 12  # Pin BCM 12 (BOARD 32) para la señal de alimentación
 
 # --- Colores para la Salida ---
@@ -195,6 +197,15 @@ def main():
     log_step("Paso 0: Realizando comprobaciones previas...")
     if os.geteuid() != 0:
         log_fail("Este script debe ser ejecutado como root. Por favor, usa 'sudo'.")
+
+    global BOOT_CONFIG_FILE
+    if os.path.exists(BOOT_CONFIG_PRIMARY_PATH):
+        BOOT_CONFIG_FILE = BOOT_CONFIG_PRIMARY_PATH
+    elif os.path.exists(BOOT_CONFIG_FALLBACK_PATH):
+        log_info(f"La ruta estándar '{BOOT_CONFIG_PRIMARY_PATH}' no se encontró. Usando la ruta alternativa '{BOOT_CONFIG_FALLBACK_PATH}'.")
+        BOOT_CONFIG_FILE = BOOT_CONFIG_FALLBACK_PATH
+    else:
+        log_fail(f"No se pudo encontrar un archivo de configuración de arranque en las rutas esperadas. La instalación no puede continuar.")
 
     log_step("Parando servicios existentes...")
     # ! Añadir todos los servicios que deban ser detenidos antes de la instalación
