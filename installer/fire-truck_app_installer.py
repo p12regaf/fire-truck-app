@@ -356,12 +356,20 @@ def main():
     
     user_info = pwd.getpwnam(TARGET_USER)
     uid, gid = user_info.pw_uid, user_info.pw_gid
-    shutil.chown(HOME_DIR, user=uid, group=gid)
-    for root, dirs, files in os.walk(HOME_DIR):
-        for d in dirs:
-            shutil.chown(os.path.join(root, d), user=uid, group=gid)
-        for f in files:
-            shutil.chown(os.path.join(root, f), user=uid, group=gid)
+
+    # Cambiar propietario de forma explícita y segura solo a lo necesario
+    log_info(f"Asegurando permisos para el usuario '{TARGET_USER}'...")
+    dirs_to_own = [HOME_DIR, APP_DIR, LOG_DIR, DATA_DIR]
+    for d in dirs_to_own:
+        try:
+            # Cambiamos el propietario del directorio y todo su contenido de forma recursiva.
+            # El comando 'chown -R' es más atómico y robusto para esto que un bucle en Python.
+            run_command(["chown", "-R", f"{uid}:{gid}", d])
+        except Exception as e:
+            # Añadimos una advertencia en lugar de un fallo si algo va mal aquí,
+            # ya que el fallo principal era el bucle 'os.walk'.
+            log_warn(f"No se pudo cambiar el propietario de '{d}' de forma recursiva: {e}")
+            
     log_ok("Usuario y directorios configurados.")
 
     log_step("Limpiando instalación anterior...")
