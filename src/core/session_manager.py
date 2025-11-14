@@ -86,7 +86,6 @@ class SessionManager:
             self._save_session_db(session_data)
             return new_session_id
 
-    # --- CAMBIO CLAVE: Dos funciones helper separadas ---
     def _get_folder_name(self, internal_type: str) -> str:
         """Devuelve el nombre de la carpeta formateado."""
         return self.FOLDER_NAME_MAP.get(internal_type, internal_type.upper())
@@ -106,7 +105,6 @@ class SessionManager:
             except OSError as e:
                 log.critical(f"No se pudo crear el directorio de datos '{dir_path}': {e}")
 
-    # --- CAMBIO CLAVE: Se usan las dos funciones helper ---
     def get_log_path(self, data_type: str) -> str:
         """Obtiene la ruta del archivo de log diario para un tipo de dato."""
         folder_name = self._get_folder_name(data_type)
