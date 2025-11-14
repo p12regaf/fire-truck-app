@@ -1,0 +1,10 @@
+# Entorno virtual de Python
+.venv/
+
+# Archivos de configuración locales específicos del dispositivo
+# ¡IMPORTANTE! Esto evita que la configuración local sea sobrescrita.
+config/config.yaml
+
+# Archivos de caché de Python
+__pycache__/
+*.pyc
