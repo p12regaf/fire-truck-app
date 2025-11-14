@@ -374,7 +374,7 @@ def main():
     log_ok("Usuario y directorios configurados.")
 
     log_step("Limpiando instalación anterior...")
-    old_programs_dir = os.path.join(HOME_DIR, "Documentos/.PROGRAMS")
+    old_programs_dir = os.path.join(HOME_DIR, "/Documentos/.PROGRAMS")
     if os.path.exists(old_programs_dir):
         try:
             user_choice = input(f"¿Deseas eliminar el directorio anterior ({old_programs_dir})? (s/n) [s]: ").strip().lower()
