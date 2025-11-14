@@ -22,8 +22,8 @@
 #
 #  USO:
 #  1. Copia este archivo y tu clave privada (renombrada a 'deploy_key') a la RPi.
-#  2. Hazlo ejecutable: chmod +x fire_truck_app_installer.py
-#  3. Ejecútalo con sudo: sudo python3 ./fire_truck_app_installer.py
+#  2. Hazlo ejecutable: chmod +x fire-truck_app_installer.py
+#  3. Ejecútalo con sudo: sudo python3 ./fire-truck_app_installer.py
 #
 # =============================================================================
 
@@ -222,7 +222,7 @@ def main():
 
     log_step("Parando servicios existentes...")
     # ! Añadir todos los servicios que deban ser detenidos antes de la instalación
-    services_to_stop = ["alarma.service", "apagar.service", "reinicio.service", "app.service", "updater.service"]
+    services_to_stop = ["alarma.service", "apagar.service", "reinicio.service", "rotativo.service", "serial.service", "GPS.service", "OBD.service", "interfaz_manual.service", "interfaz_manual.service", "gps_imu_logger.service", "serverweb.service", "decodificadorTXTaCSV.service", "app.service", "updater.service"]
     for service in services_to_stop:
         try:
             proc = subprocess.run(
