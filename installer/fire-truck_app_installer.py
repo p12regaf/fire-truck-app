@@ -14,6 +14,7 @@
 #  4. Crea el usuario 'cosigein' si no existe.
 #  5. Instala la Deploy Key de Git que debe estar junto a este script.
 #  6. Configura /boot/firmware/config.txt para habilitar todo el hardware.
+#  6.5 Activa el ssh en la raspberry si no está activo.
 #  7. Clona el repositorio de la aplicación.
 #  8. Modifica config.yaml con el ID de equipo proporcionado.
 #  9. Configura el entorno virtual y las dependencias de Python.
@@ -466,6 +467,10 @@ def main():
         run_command(["git", "clone", "--branch", git_branch, repo_url, APP_DIR], as_user=TARGET_USER)
     log_ok(f"Repositorio clonado/actualizado en {APP_DIR}.")
 
+    log_step("Habilitando servicio SSH...")
+    run_command(["systemctl", "enable", "ssh"])
+    run_command(["systemctl", "start", "ssh"])
+    log_ok("Servicio SSH habilitado y arrancado.")
 
     log_step("Paso 7: Configurando ID de dispositivo en config.yaml...")
     TEMPLATE_CONFIG_PATH = os.path.join(APP_DIR, "config", "config.yaml.template")
