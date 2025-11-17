@@ -36,9 +36,19 @@ class GPSAcquirer(BaseAcquirer):
         if not coord:
             return None
         try:
+            if '.' not in coord:
+                # Si no hay punto decimal, la trama está corrupta.
+                log.warning(f"Coordenada GPS corrupta (sin punto decimal): {coord}")
+                return None
+            
             grados = int(float(coord) / 100)
             minutos = float(coord) - grados * 100
             dec = grados + minutos / 60.0
+
+            if abs(grados) > 180: # Si es mayor que 180, es inválido para ambos
+                 log.warning(f"Coordenada GPS fuera de rango (grados={grados}). Trama corrupta: {coord}")
+                 return None
+            
             if direction in ['S', 'W']:
                 dec = -dec
             return round(dec, 7)
@@ -71,6 +81,11 @@ class GPSAcquirer(BaseAcquirer):
             campos = line.strip().split(",")
             if len(campos) < 10:
                 return None
+            
+            # Comprobación de integridad básica: una trama GGA válida tiene al menos 15 campos.
+            if len(campos) < 15:
+                log.warning(f"Trama GNGGA incompleta (campos: {len(campos)}). Descartando: {line}")
+                return None
                 
             fix = campos[6]
             if fix == '0' or not campos[2] or not campos[4]:
@@ -81,7 +96,9 @@ class GPSAcquirer(BaseAcquirer):
             lon_decimal = self._convert_lat_lon(campos[4], campos[5])
 
             if lat_decimal is None or lon_decimal is None:
-                return None
+                # El log de por qué es None ya se ha hecho en _convert_lat_lon
+                log.warning(f"Coordenadas inválidas recibidas en trama GNGGA. Descartando.")
+                return None # Devuelve None para que la trama entera sea descartada
             
             # NUEVO: Extraer y formatear hora GPS
             gps_time_str = "N/A"
