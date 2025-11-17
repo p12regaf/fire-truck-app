@@ -191,26 +191,26 @@ class AppController:
 
         if data_type == "estabilometro":
             # Asegura el orden correcto de las columnas usando las claves del acquirer
-            ordered_values = [str(data.get(key, 'N/A')) for key in IMUAcquirer.DATA_KEYS]
+            ordered_values = [str(data.get(key, '')) for key in IMUAcquirer.DATA_KEYS]
             return ";".join(ordered_values) + ";\n"
         
         elif data_type == "gps":
             if data.get("status") == "Valid":
                 return (
                     f"{ts_str};"
-                    f"{data.get('gps_date', 'N/A')};"
-                    f"{data.get('gps_time', 'N/A')};"
-                    f"{data.get('latitude', 'N/A')};"
-                    f"{data.get('longitude', 'N/A')};"
-                    f"{data.get('altitude_m', 'N/A')};"
-                    f"{data.get('hdop', 'N/A')};"
-                    f"{data.get('fix_quality', 'N/A')};"
-                    f"{data.get('num_sats', 'N/A')};"
-                    f"{data.get('speed_kmph', 'N/A')};\n"
+                    f"{data.get('gps_date', '')};"
+                    f"{data.get('gps_time', '')};"
+                    f"{data.get('latitude', '')};"
+                    f"{data.get('longitude', '')};"
+                    f"{data.get('altitude_m', '')};"
+                    f"{data.get('hdop', '')};"
+                    f"{data.get('fix_quality', '')};"
+                    f"{data.get('num_sats', '')};"
+                    f"{data.get('speed_kmph', '')};\n"
                 )
             else:
                  # Si no hay fix, se loguea una línea con N/A y '0' en fix
-                 return f"{ts_str};N/A;N/A;N/A;N/A;N/A;N/A;0;N/A;N/A;\n"
+                 return f"{ts_str};;;;;;;;;;\n"
 
         elif data_type == "rotativo":
             return f"{ts_str};{data.get('status', 0)};\n"
@@ -223,8 +223,8 @@ class AppController:
             
             return (
                 f"{ts_str};"
-                f"{data.get('interface', 'N/A')};"
-                f"{data.get('arbitration_id_hex', 'N/A')};"
+                f"{data.get('interface', '')};"
+                f"{data.get('arbitration_id_hex', '')};"
                 f"{data_len_str};"
                 f"{data_str_spaced};\n"
             )
