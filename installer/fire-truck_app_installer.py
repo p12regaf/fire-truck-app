@@ -254,8 +254,8 @@ def main():
 
     log_step("Parando servicios existentes...")
     # ! Añadir todos los servicios que deban ser detenidos antes de la instalación
-    services_to_stop = ["alarma.service", "apagar.service", "reinicio.service", "rotativo.service", "serial.service", "GPS.service", "OBD.service", "interfaz_manual.service", "interfaz_manual.service", "gps_imu_logger.service", "serverweb.service", "decodificadorTXTaCSV.service", "app.service", "updater.service"]
-    for service in services_to_stop:
+    services_to_stop_and_disable = ["alarma.service", "apagar.service", "reinicio.service", "rotativo.service", "serial.service", "GPS.service", "OBD.service", "interfaz_manual.service", "interfaz_manual.service", "gps_imu_logger.service", "serverweb.service", "decodificadorTXTaCSV.service", "app.service", "updater.service"]
+    for service in services_to_stop_and_disable:
         try:
             proc = subprocess.run(
                 ["systemctl", "stop", service],
@@ -264,6 +264,13 @@ def main():
             )
             if proc.returncode == 0:
                 log_info(f"Servicio '{service}' detenido correctamente.")
+                proc = subprocess.run(
+                    ["systemctl", "disable", service],
+                    capture_output=True,
+                    text=True
+                )
+                if proc.returncode == 0:
+                    log_info(f"Servicio '{service}' deshabilitado correctamente.")
             else:
                 stderr = (proc.stderr or "").lower()
                 stdout = (proc.stdout or "").lower()
