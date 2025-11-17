@@ -52,7 +52,8 @@ class GPSAcquirer(BaseAcquirer):
             if direction in ['S', 'W']:
                 dec = -dec
             return round(dec, 7)
-        except (ValueError, TypeError):
+        except (ValueError, TypeError) as e:
+            log.warning(f"Error al convertir coordenada GPS '{coord}': {e}")
             return None
 
     def _parse_gnrmc(self, line: str):
@@ -91,14 +92,31 @@ class GPSAcquirer(BaseAcquirer):
             if fix == '0' or not campos[2] or not campos[4]:
                 log.info("Trama GGA recibida, pero sin fix de GPS. Se registrará el estado.")
                 return {"status": "No Fix"}
+            
+            lat_direction = campos[3]
+            lon_direction = campos[5]
 
-            lat_decimal = self._convert_lat_lon(campos[2], campos[3])
-            lon_decimal = self._convert_lat_lon(campos[4], campos[5])
+            if lat_direction != 'N':
+                log.warning(f"Latitud inválida para España (dirección '{lat_direction}', se esperaba 'N'). Descartando trama.")
+                return None
+
+            lat_decimal = self._convert_lat_lon(campos[2], lat_direction)
+            lon_decimal = self._convert_lat_lon(campos[4], lon_direction)
 
             if lat_decimal is None or lon_decimal is None:
                 # El log de por qué es None ya se ha hecho en _convert_lat_lon
                 log.warning(f"Coordenadas inválidas recibidas en trama GNGGA. Descartando.")
                 return None # Devuelve None para que la trama entera sea descartada
+            
+            # Latitud: ~36° a ~44°
+            if not (35.0 < lat_decimal < 45.0):
+                log.warning(f"Latitud ({lat_decimal}) fuera del rango esperado para España. Descartando trama.")
+                return None
+            
+            # Longitud: ~-18° (Canarias) a ~4° (Baleares)
+            if not (-19.0 < lon_decimal < 5.0):
+                log.warning(f"Longitud ({lon_decimal}) fuera del rango esperado para España. Descartando trama.")
+                return None
             
             # NUEVO: Extraer y formatear hora GPS
             gps_time_str = "N/A"
@@ -110,13 +128,13 @@ class GPSAcquirer(BaseAcquirer):
                 "status": "Valid",
                 "latitude": f"{lat_decimal:.7f}", # Aumentada precisión para coincidir con ejemplo
                 "longitude": f"{lon_decimal:.7f}",
-                "altitude_m": campos[9] if campos[9] else "N/A",
-                "hdop": campos[8] if campos[8] else "N/A",
+                "altitude_m": campos[9] if campos[9] else "",
+                "hdop": campos[8] if campos[8] else "",
                 "fix_quality": fix,
-                "num_sats": campos[7] if campos[7] else "N/A",
-                "speed_kmph": self._last_speed_kmh if self._last_speed_kmh is not None else "N/A",
+                "num_sats": campos[7] if campos[7] else "",
+                "speed_kmph": self._last_speed_kmh if self._last_speed_kmh is not None else "",
                 "gps_time": gps_time_str,
-                "gps_date": self._last_date_str if self._last_date_str is not None else "N/A"
+                "gps_date": self._last_date_str if self._last_date_str is not None else ""
             }
         except (ValueError, IndexError) as e:
             log.warning(f"Error parseando GNGGA: {e} en línea: {line}")
