@@ -3,9 +3,23 @@ import logging
 import os
 import threading
 import time
+import socket
 from datetime import datetime
 
 log = logging.getLogger(__name__)
+
+def check_internet_connection(host="8.8.8.8", port=53, timeout=3):
+    """
+    Intenta conectarse a un host conocido (como el DNS de Google) para
+    verificar si hay una conexión a internet activa.
+    """
+    try:
+        socket.setdefaulttimeout(timeout)
+        socket.socket(socket.AF_INET, socket.SOCK_STREAM).connect((host, port))
+        return True
+    except socket.error:
+        log.debug("No se pudo conectar a %s. Asumiendo que no hay internet.", host)
+        return False
 
 class FTPTransmitter(threading.Thread):
     """
@@ -26,6 +40,13 @@ class FTPTransmitter(threading.Thread):
 
     def run(self):
         log.info(f"Iniciando transmisor FTP. Logs cada {self.log_scan_interval}s, RealTime cada {self.realtime_scan_interval}s.")
+
+        # Dar tiempo a la red para que se establezca después del arranque.
+        initial_wait_sec = 15
+        log.info(f"Esperando {initial_wait_sec} segundos antes del primer ciclo de subida FTP...")
+        if self.shutdown_event.wait(initial_wait_sec):
+            log.info("Señal de apagado recibida durante la espera inicial. Saliendo de FTPTransmitter.")
+            return
         
         # Ejecutar un ciclo de subida completo al arrancar
         log.info("Realizando ciclo de subida inicial completo (logs y tiempo real)...")
@@ -52,7 +73,7 @@ class FTPTransmitter(threading.Thread):
                 last_realtime_scan_time = current_time
             
             # Esperar un poco para no consumir CPU
-            self.shutdown_event.wait(1)
+            self.shutdown_event.wait(5)
 
         log.info("Transmisor FTP detenido.")
 
@@ -74,6 +95,11 @@ class FTPTransmitter(threading.Thread):
 
     def _scan_and_upload(self, file_filter: callable):
         """Función genérica para escanear y subir archivos que cumplan un criterio."""
+
+        if not check_internet_connection():
+            log.info("No hay conexión a internet. Omitiendo ciclo de subida FTP.")
+            return
+        
         data_root = self.paths_config.get('data_root')
         if not os.path.isdir(data_root):
             log.warning(f"El directorio raíz '{data_root}' no existe. No hay nada que subir.")
@@ -103,7 +129,10 @@ class FTPTransmitter(threading.Thread):
             log.error(f"Error inesperado durante el ciclo de subida FTP: {e}", exc_info=True)
         finally:
             if ftp:
-                ftp.quit()
+                try:
+                    ftp.quit()
+                except ftplib.all_errors:
+                    pass
 
     def _perform_log_upload_cycle(self):
         """Escanea y sube solo los archivos de log de días anteriores."""
