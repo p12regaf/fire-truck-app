@@ -15,7 +15,7 @@ class GPSAcquirer(BaseAcquirer):
         
         self._buffer = bytearray()
         self._last_speed_kmh: Optional[str] = None
-        self._last_date_str: Optional[str] = None # NUEVO: Para almacenar la fecha de la trama RMC
+        self._last_date_str: Optional[str] = None
         self.MAX_BUFFER_SIZE = 4096
 
     def _setup(self) -> bool:
