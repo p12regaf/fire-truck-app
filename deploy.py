@@ -171,11 +171,17 @@ def main():
         
         # --- PASO 3: Configuración de la Deploy Key ---
         print_step("Paso 3: Configurando Deploy Key...")
+        ssh_dir_path = f"/home/{TARGET_USER}/.ssh"
         key_path = f"/home/{TARGET_USER}/.ssh/id_ed25519"
         pub_key_path = f"{key_path}.pub"
         
-        deployer.execute(f"mkdir -p /home/{TARGET_USER}/.ssh")
-        deployer.execute(f"chmod 700 /home/{TARGET_USER}/.ssh")
+        deployer.execute(f"mkdir -p {ssh_dir_path}")
+
+        print_info("Asegurando permisos correctos para el directorio .ssh y la clave privada...")
+        # El directorio .ssh debe ser 700 (solo el propietario tiene acceso)
+        deployer.execute(f"chmod 700 {ssh_dir_path}")
+        # La clave privada DEBE ser 600 (solo el propietario puede leer/escribir)
+        deployer.execute(f"chmod 600 {key_path}", ignore_errors=True) # Ignorar si el archivo no existe aún
 
         key_exists_cmd = f"[ -f {pub_key_path} ] && echo 'exists' || echo 'not exists'"
         key_status = deployer.execute(key_exists_cmd)
@@ -183,6 +189,7 @@ def main():
         if 'not exists' in key_status:
             print_info("No se encontró una clave SSH existente. Generando una nueva...")
             deployer.execute(f"ssh-keygen -t ed25519 -f {key_path} -N '' -C 'fire-truck-app-deploy-key'")
+            deployer.execute(f"chmod 600 {key_path}")
             public_key = deployer.execute(f"cat {pub_key_path}")
             
             print(f"\n{Colors.WARNING}--- ACCIÓN MANUAL REQUERIDA ---{Colors.ENDC}")

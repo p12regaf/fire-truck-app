@@ -192,6 +192,37 @@ network={{
     except Exception as e:
         log_fail(f"Error inesperado al configurar el Wi-Fi de respaldo: {e}")
 
+
+# Añade esta nueva función auxiliar al principio del script
+def disable_serial_console():
+    """Deshabilita la consola de login en el puerto serie para liberarlo."""
+    log_info("Deshabilitando la consola de login en el puerto serie...")
+    try:
+        # Detener e inhabilitar el servicio que gestiona el login por serie
+        run_command(["systemctl", "stop", "serial-getty@ttyS0.service"])
+        run_command(["systemctl", "disable", "serial-getty@ttyS0.service"])
+        
+        # Eliminar la configuración de la consola del kernel en el arranque
+        cmdline_path = "/boot/firmware/cmdline.txt"
+        if not os.path.exists(cmdline_path):
+             cmdline_path = "/boot/cmdline.txt" # Fallback para sistemas más antiguos
+
+        if os.path.exists(cmdline_path):
+            with open(cmdline_path, "r") as f:
+                content = f.read()
+            
+            # Elimina 'console=serial0,115200' o 'console=ttyAMA0,115200'
+            new_content = re.sub(r"console=(serial0|ttyAMA0),\d+\s?", "", content)
+            
+            with open(cmdline_path, "w") as f:
+                f.write(new_content)
+            log_ok("Consola serie deshabilitada. Se requiere reinicio.")
+        else:
+            log_warn(f"No se encontró {cmdline_path}. No se pudo deshabilitar la consola del kernel.")
+            
+    except Exception as e:
+        log_warn(f"No se pudo deshabilitar completamente la consola serie: {e}")
+
 def main():
     """Función principal del script de instalación."""
 
@@ -351,25 +382,25 @@ def main():
         log_warn(f"Por favor, establece una contraseña para él ejecutando 'sudo passwd {TARGET_USER}' después.")
 
     log_info("Creando directorios de la aplicación...")
-    os.makedirs(APP_DIR, exist_ok=True)
-    os.makedirs(LOG_DIR, exist_ok=True)
-    os.makedirs(DATA_DIR, exist_ok=True)
+    run_command(["mkdir", "-p", APP_DIR], as_user=TARGET_USER)
+    run_command(["mkdir", "-p", LOG_DIR], as_user=TARGET_USER)
+    run_command(["mkdir", "-p", DATA_DIR], as_user=TARGET_USER)
     
     user_info = pwd.getpwnam(TARGET_USER)
     uid, gid = user_info.pw_uid, user_info.pw_gid
 
-    # Cambiar propietario de forma explícita y segura solo a lo necesario
-    log_info(f"Asegurando permisos para el usuario '{TARGET_USER}'...")
-    dirs_to_own = [HOME_DIR, APP_DIR, LOG_DIR, DATA_DIR]
-    for d in dirs_to_own:
-        try:
-            # Cambiamos el propietario del directorio y todo su contenido de forma recursiva.
-            # El comando 'chown -R' es más atómico y robusto para esto que un bucle en Python.
-            run_command(["chown", "-R", f"{uid}:{gid}", d])
-        except Exception as e:
-            # Añadimos una advertencia en lugar de un fallo si algo va mal aquí,
-            # ya que el fallo principal era el bucle 'os.walk'.
-            log_warn(f"No se pudo cambiar el propietario de '{d}' de forma recursiva: {e}")
+    # # Cambiar propietario de forma explícita y segura solo a lo necesario
+    # log_info(f"Asegurando permisos para el usuario '{TARGET_USER}'...")
+    # dirs_to_own = [HOME_DIR, APP_DIR, LOG_DIR, DATA_DIR]
+    # for d in dirs_to_own:
+    #     try:
+    #         # Cambiamos el propietario del directorio y todo su contenido de forma recursiva.
+    #         # El comando 'chown -R' es más atómico y robusto para esto que un bucle en Python.
+    #         run_command(["chown", "-R", f"{uid}:{gid}", d])
+    #     except Exception as e:
+    #         # Añadimos una advertencia en lugar de un fallo si algo va mal aquí,
+    #         # ya que el fallo principal era el bucle 'os.walk'.
+    #         log_warn(f"No se pudo cambiar el propietario de '{d}' de forma recursiva: {e}")
             
     log_ok("Usuario y directorios configurados.")
 
@@ -455,6 +486,8 @@ def main():
     except subprocess.CalledProcessError as e:
         log_warn(f"No se pudo remover fake-hwclock (quizás ya no estaba instalado): {e.stderr}")
     log_ok("Configuración de hardware completada.")
+
+    disable_serial_console()
 
 
     log_step("Paso 6: Clonando repositorio de la aplicación...")
