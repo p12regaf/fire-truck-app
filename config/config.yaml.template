@@ -18,7 +18,7 @@ system:
     pull_up_down: "PUD_UP" 
   
   alarm_monitor:
-    enabled: true
+    enabled: false
     # Pin GPIO (BCM) para la alarma de la fuente de alimentación. Pin 37 (BOARD) -> 26 (BCM).
     pin: 26
     # La alarma se activa (TRUE) cuando el pin pasa a estado HIGH.
