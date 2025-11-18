@@ -531,6 +531,13 @@ def main():
             fr'\g<1>{device_id}\g<2>',
             config_content
         )
+
+        # Modificar también el pin del rotativo
+        new_config_content = re.sub(
+            r'(\s*rotary_pin:\s*)\d+',
+            fr'\g<1>{rotary_pin}',
+            new_config_content
+        )
         
         if new_config_content == config_content:
             log_warn("No se encontró el campo 'device_number' en la plantilla. No se pudo actualizar el ID.")
