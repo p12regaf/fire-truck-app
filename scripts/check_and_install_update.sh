@@ -21,7 +21,7 @@ log "Actualizando el repositorio remoto..."
 git remote update &> /dev/null
 
 log "Comprobando el estado del repositorio local..."
-GIT_STATUS=$(git status -uno)
+GIT_STATUS=$(LANG= C git status -uno)
 
 if [[ $GIT_STATUS == *"Your branch is behind"* ]]; then
     log "¡Nueva versión detectada! Iniciando proceso de actualización."
