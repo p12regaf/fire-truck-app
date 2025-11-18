@@ -12,9 +12,10 @@
 #
 #  USO:
 #  1. Copia este archivo y tu clave privada (renombrada a 'deploy_key') a la RPi.
-#  2. Hazlo ejecutable: chmod +x fire-truck_app_installer.py
+#  2. Hazlo ejecutable y ejecutalo con sudo: chmod +x fire-truck_app_installer.py
 #  3. Ejecútalo con sudo: sudo python3 ./fire-truck_app_installer.py 
 #
+
 # =============================================================================
 
 import os
@@ -222,7 +223,7 @@ def main():
         log_fail("No se pudo encontrar un archivo de configuración de arranque.")
 
     log_step("Parando servicios existentes...")
-    services_to_stop = ["app.service", "updater.service"]
+    services_to_stop = ["app.service", "updater.service", "apagar.service", "alarma.service", "reinicio.service","GPS.service", "gps_imu_logger.service", "interfaz_manual.service", "OBD.service", "rotativo.service", "serverweb.service", "serial.service"]
     for service in services_to_stop:
         run_command(["systemctl", "stop", service], ignore_errors=True)
         run_command(["systemctl", "disable", service], ignore_errors=True)

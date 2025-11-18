@@ -55,6 +55,10 @@ def main():
     signal.signal(signal.SIGINT, signal_handler)  # Ctrl+C
     signal.signal(signal.SIGTERM, signal_handler) # systemctl stop
 
+
+    # TODO: Esperar un tiempo para asegurar que los servicios del sistema estén listos
+    time.sleep(60)
+
     # 5. Iniciar los servicios del backend
     app_controller.start()
 
