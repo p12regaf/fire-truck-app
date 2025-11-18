@@ -32,6 +32,8 @@ class AppController:
         
         self.session_manager = SessionManager(config)
 
+        self.ftp_transmitter = None
+
         # Instanciar todos los componentes (trabajadores)
         self._initialize_workers()
         
@@ -63,7 +65,8 @@ class AppController:
 
         if self.config.get('ftp', {}).get('enabled', False):
             log.info("FTP Transmitter está habilitado. Inicializando...")
-            self.workers.append(FTPTransmitter(self.config, self.shutdown_event, self.session_manager))
+            self.ftp_transmitter = FTPTransmitter(self.config, self.shutdown_event, self.session_manager)
+            self.workers.append(self.ftp_transmitter)
         
         if self.config.get('system', {}).get('power_monitor', {}).get('enabled', False):
             log.info("Power Monitor está habilitado. Inicializando...")
@@ -163,6 +166,11 @@ class AppController:
             
         log.info("Iniciando secuencia de apagado...")
         self.shutdown_event.set()
+
+        if self.ftp_transmitter:
+            log.info("Iniciando subida final de logs de sistema...")
+            # Esta es una llamada síncrona/bloqueante para asegurar que se completa
+            self.ftp_transmitter.upload_final_logs()
 
         # Esperar a que los hilos de trabajo terminen
         for worker in self.workers:
