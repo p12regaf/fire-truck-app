@@ -198,3 +198,78 @@ class FTPTransmitter(threading.Thread):
         except Exception as e:
             log.error(f"Error inesperado al subir {local_path}: {e}")
             return False
+        
+    def upload_final_logs(self):
+        """
+        Método síncrono para subir los logs del sistema al final de la sesión.
+        Se ejecuta desde AppController durante el apagado.
+        """
+        if not self.ftp_config.get('enabled', False):
+            log.info("FTP está deshabilitado, no se subirán los logs finales.")
+            return
+
+        if not check_internet_connection():
+            log.warning("No hay conexión a internet. No se pueden subir los logs finales.")
+            return
+        
+        ftp = self._connect_ftp()
+        if not ftp:
+            log.error("No se pudo conectar a FTP para la subida final de logs.")
+            return
+
+        # Definir las rutas de los logs a subir
+        app_log_dir = self.paths_config.get('app_logs')
+        updater_log_path = self.paths_config.get('updater_log') # Necesita ser configurado
+        
+        files_to_upload = []
+        if app_log_dir:
+            files_to_upload.append(os.path.join(app_log_dir, 'fire-truck-app_app.log'))
+        if updater_log_path:
+            files_to_upload.append(updater_log_path)
+            
+        try:
+            for local_path in files_to_upload:
+                if os.path.exists(local_path):
+                    log.info(f"Intentando subida final del log: {local_path}")
+                    self._upload_system_log(ftp, local_path)
+                else:
+                    log.warning(f"El archivo de log final no se encontró: {local_path}")
+        finally:
+            if ftp:
+                try:
+                    ftp.quit()
+                    log.info("Conexión FTP para subida final cerrada.")
+                except ftplib.all_errors:
+                    pass
+
+    # --- MÉTODO NUEVO ---
+    def _upload_system_log(self, ftp, local_path: str):
+        """Sube un archivo de log del sistema a datos_doback/dobackXXX/system_logs/."""
+        try:
+            filename = os.path.basename(local_path)
+            device_name = self.session_manager.device_name.lower()
+            remote_log_dir = "system_logs"
+
+            # Navegar a datos_doback/dobackXXX/
+            if device_name not in ftp.nlst():
+                ftp.mkd(device_name)
+            ftp.cwd(device_name)
+
+            # Navegar a datos_doback/dobackXXX/system_logs/
+            if remote_log_dir not in ftp.nlst():
+                ftp.mkd(remote_log_dir)
+            ftp.cwd(remote_log_dir)
+
+            log.info(f"  -> Subiendo log de sistema {filename} a {ftp.pwd()}...")
+            with open(local_path, 'rb') as f:
+                ftp.storbinary(f'STOR {filename}', f)
+
+            # Volver al directorio base para el siguiente archivo
+            ftp.cwd('/datos_doback')
+        except ftplib.all_errors as e:
+            log.error(f"Error FTP al subir el log de sistema {local_path}: {e}")
+            try:
+                ftp.cwd('/datos_doback')
+            except ftplib.all_errors: pass
+        except Exception as e:
+            log.error(f"Error inesperado al subir el log de sistema {local_path}: {e}")

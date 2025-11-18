@@ -9,17 +9,18 @@
 #  Este script realiza una instalación completa en una Raspberry Pi:
 #  0. Habilita una señal de alimentación en GPIO 12 (3.3V) usando RPi.GPIO.
 #  1. Comprueba que se ejecuta como root.
-#  2. Pide los datos necesarios (URL del repo, rama, ID de equipo).
-#  3. Actualiza el sistema e instala todas las dependencias.
-#  4. Crea el usuario 'cosigein' si no existe.
-#  5. Instala la Deploy Key de Git que debe estar junto a este script.
-#  6. Configura /boot/firmware/config.txt para habilitar todo el hardware.
-#  6.5 Activa el ssh en la raspberry si no está activo.
-#  7. Clona el repositorio de la aplicación.
-#  8. Modifica config.yaml con el ID de equipo proporcionado.
-#  9. Configura el entorno virtual y las dependencias de Python.
-#  10. Establece todos los permisos de sistema y de usuario.
-#  11. Instala y habilita los servicios systemd.
+#  2. Detiene servicios existentes relacionados con la aplicación.
+#  3. Recopila información del usuario (repositorio Git, rama, ID de dispositivo, pin rotativo).
+#  4. Actualiza el sistema e instala dependencias necesarias.
+#  5. Crea el usuario 'cosigein' si no existe y configura sus directorios.
+#  6. Instala la clave SSH privada para acceder al repositorio Git.
+#  7. Configura periféricos en config.txt (I2C, SPI, CAN, RTC, UART).
+#  8. Clona el repositorio de la aplicación.
+#  9. Configura el ID de dispositivo en config.yaml.
+# 10. Crea un entorno virtual Python e instala dependencias.
+# 11. Establece permisos de sistema necesarios.
+# 12. Instala y habilita servicios systemd para la aplicación.
+
 #
 #  USO:
 #  1. Copia este archivo y tu clave privada (renombrada a 'deploy_key') a la RPi.
