@@ -1,6 +1,8 @@
 [Unit]
 Description=Servicio de Monitorización de Vehículos (fire-truck-app)
-After=network.target
+After=updater.service
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 User=cosigein
