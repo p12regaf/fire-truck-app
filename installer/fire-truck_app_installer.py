@@ -1,26 +1,14 @@
 #!/usr/bin/env python3
 
-# ! TODO: Asegurarse de que el dispositivo se conectará a internet después de la instalación.
-
 # =============================================================================
 #  INSTALADOR AUTOMÁTICO PARA fire-truck-app (VERSIÓN PYTHON)
 # =============================================================================
 #
-#  Este script realiza una instalación completa en una Raspberry Pi:
-#  0. Habilita una señal de alimentación en GPIO 12 (3.3V) usando RPi.GPIO.
-#  1. Comprueba que se ejecuta como root.
-#  2. Detiene servicios existentes relacionados con la aplicación.
-#  3. Recopila información del usuario (repositorio Git, rama, ID de dispositivo, pin rotativo).
-#  4. Actualiza el sistema e instala dependencias necesarias.
-#  5. Crea el usuario 'cosigein' si no existe y configura sus directorios.
-#  6. Instala la clave SSH privada para acceder al repositorio Git.
-#  7. Configura periféricos en config.txt (I2C, SPI, CAN, RTC, UART).
-#  8. Clona el repositorio de la aplicación.
-#  9. Configura el ID de dispositivo en config.yaml.
-# 10. Crea un entorno virtual Python e instala dependencias.
-# 11. Establece permisos de sistema necesarios.
-# 12. Instala y habilita servicios systemd para la aplicación.
-
+#  Este script realiza una instalación completa y robusta en una Raspberry Pi:
+#  - Corrige los problemas de permisos de clave SSH desde el inicio.
+#  - Configura sudoers para permitir que el servicio de actualización funcione.
+#  - Asegura que la red esté lista antes de que los servicios arranquen.
+#  - Actualiza todos los parámetros necesarios en config.yaml.
 #
 #  USO:
 #  1. Copia este archivo y tu clave privada (renombrada a 'deploy_key') a la RPi.
@@ -46,13 +34,13 @@ DATA_DIR = os.path.join(HOME_DIR, "datos")
 BOOT_CONFIG_PRIMARY_PATH = "/boot/firmware/config.txt"
 BOOT_CONFIG_FALLBACK_PATH = "/boot/config.txt" 
 BOOT_CONFIG_FILE = "" 
-POWER_OK_GPIO = 12  # Pin BCM 12 (BOARD 32) para la señal de alimentación
+POWER_OK_GPIO = 12
 
 # --- Colores para la Salida ---
 C_HEADER = '\033[95m'
 C_OKBLUE = '\033[94m'
 C_OKCYAN = '\033[96m'
-C_OKGREEN = '\032m'
+C_OKGREEN = '\033[92m'
 C_WARNING = '\033[93m'
 C_FAIL = '\033[91m'
 C_ENDC = '\033[0m'
@@ -76,8 +64,8 @@ def log_fail(message):
     sys.exit(1)
 
 # --- Funciones Auxiliares ---
-def run_command(command, as_user=None, env=None):
-    """Ejecuta un comando de sistema, fallando si devuelve un error."""
+def run_command(command, as_user=None, env=None, ignore_errors=False):
+    """Ejecuta un comando de sistema."""
     preexec_fn = None
     if as_user:
         try:
@@ -94,7 +82,7 @@ def run_command(command, as_user=None, env=None):
     try:
         process = subprocess.run(
             command,
-            check=True,
+            check=not ignore_errors,
             capture_output=True,
             text=True,
             preexec_fn=preexec_fn,
@@ -114,7 +102,6 @@ def ensure_config_line(pattern, line, comment=None):
         with open(BOOT_CONFIG_FILE, 'r') as f:
             content = f.read()
 
-        import re
         if re.search(f"^{re.escape(pattern)}", content, re.MULTILINE):
             log_info(f"La configuración '{pattern}' ya existe. Omitiendo.")
             return
@@ -141,7 +128,6 @@ def configure_fallback_wifi():
     except (EOFError, KeyboardInterrupt):
         ssid_input = ""
         
-    # Usar el valor del usuario si lo proporciona, si no, el por defecto.
     final_ssid = ssid_input or default_fallback_ssid
     log_info(f"SSID de respaldo establecido a: {final_ssid}")
 
@@ -151,12 +137,8 @@ def configure_fallback_wifi():
     except (EOFError, KeyboardInterrupt):
         psk_input = ""
         
-    # Usar la contraseña del usuario si la proporciona, si no, la por defecto.
     final_psk = psk_input or default_fallback_psk
-    if psk_input:
-        log_info("Contraseña de respaldo establecida a la proporcionada por el usuario.")
-    else:
-        log_info(f"Usando contraseña por defecto.")
+    log_info(f"Usando contraseña {'por defecto' if not psk_input else 'proporcionada'}.")
 
     if not os.path.exists(WPA_CONF_PATH):
         log_warn(f"No se encontró el archivo '{WPA_CONF_PATH}'. Omitiendo configuración de Wi-Fi.")
@@ -166,14 +148,12 @@ def configure_fallback_wifi():
         with open(WPA_CONF_PATH, 'r') as f:
             content = f.read()
 
-        # Usar las variables locales 'final_ssid' y 'final_psk'
         if f'ssid="{final_ssid}"' in content:
             log_info(f"La red Wi-Fi '{final_ssid}' ya está configurada. Omitiendo.")
             return
 
         priorities = re.findall(r'^\s*priority\s*=\s*(-?\d+)', content, re.MULTILINE)
-        existing_priorities = [int(p) for p in priorities]
-        new_priority = (min(existing_priorities) - 1) if existing_priorities else -1
+        new_priority = (min(int(p) for p in priorities) - 1) if priorities else -1
         log_info(f"Asignando prioridad '{new_priority}' a la red de respaldo '{final_ssid}'.")
 
         fallback_network_block = f"""
@@ -190,29 +170,22 @@ network={{
         log_ok(f"Red Wi-Fi de respaldo '{final_ssid}' añadida correctamente.")
     except (IOError, PermissionError) as e:
         log_fail(f"No se pudo modificar el archivo de configuración de Wi-Fi: {e}")
-    except Exception as e:
-        log_fail(f"Error inesperado al configurar el Wi-Fi de respaldo: {e}")
 
-
-# Añade esta nueva función auxiliar al principio del script
 def disable_serial_console():
     """Deshabilita la consola de login en el puerto serie para liberarlo."""
     log_info("Deshabilitando la consola de login en el puerto serie...")
     try:
-        # Detener e inhabilitar el servicio que gestiona el login por serie
-        run_command(["systemctl", "stop", "serial-getty@ttyS0.service"])
-        run_command(["systemctl", "disable", "serial-getty@ttyS0.service"])
+        run_command(["systemctl", "stop", "serial-getty@ttyS0.service"], ignore_errors=True)
+        run_command(["systemctl", "disable", "serial-getty@ttyS0.service"], ignore_errors=True)
         
-        # Eliminar la configuración de la consola del kernel en el arranque
         cmdline_path = "/boot/firmware/cmdline.txt"
         if not os.path.exists(cmdline_path):
-             cmdline_path = "/boot/cmdline.txt" # Fallback para sistemas más antiguos
+             cmdline_path = "/boot/cmdline.txt"
 
         if os.path.exists(cmdline_path):
             with open(cmdline_path, "r") as f:
                 content = f.read()
             
-            # Elimina 'console=serial0,115200' o 'console=ttyAMA0,115200'
             new_content = re.sub(r"console=(serial0|ttyAMA0),\d+\s?", "", content)
             
             with open(cmdline_path, "w") as f:
@@ -226,19 +199,15 @@ def disable_serial_console():
 
 def main():
     """Función principal del script de instalación."""
-
-    # Confirmación sobre conectividad posterior a la instalación
     log_step("Comprobación previa: conexión a Internet después de la instalación")
     try:
-        conn_choice = input("¿Estás seguro de que el dispositivo tendrá conexión a Internet después de ejecutar este instalador? (s/n) [s]: ").strip().lower()
+        conn_choice = input("¿Estás seguro de que el dispositivo tendrá conexión a Internet después de la instalación? (s/n) [s]: ").strip().lower()
     except (EOFError, KeyboardInterrupt):
         conn_choice = "n"
 
     if conn_choice in ("n", "no"):
-        log_warn("Instalación cancelada: verifica la conectividad de red antes de ejecutar el instalador.")
+        log_warn("Instalación cancelada.")
         sys.exit(0)
-    else:
-        log_info("Continuando. Se asumirá que habrá conexión a Internet una vez finalice la instalación.")
     
     log_step("Paso 0: Realizando comprobaciones previas...")
     if os.geteuid() != 0:
@@ -248,45 +217,16 @@ def main():
     if os.path.exists(BOOT_CONFIG_PRIMARY_PATH):
         BOOT_CONFIG_FILE = BOOT_CONFIG_PRIMARY_PATH
     elif os.path.exists(BOOT_CONFIG_FALLBACK_PATH):
-        log_info(f"La ruta estándar '{BOOT_CONFIG_PRIMARY_PATH}' no se encontró. Usando la ruta alternativa '{BOOT_CONFIG_FALLBACK_PATH}'.")
         BOOT_CONFIG_FILE = BOOT_CONFIG_FALLBACK_PATH
     else:
-        log_fail(f"No se pudo encontrar un archivo de configuración de arranque en las rutas esperadas. La instalación no puede continuar.")
+        log_fail("No se pudo encontrar un archivo de configuración de arranque.")
 
     log_step("Parando servicios existentes...")
-    # ! Añadir todos los servicios que deban ser detenidos antes de la instalación
-    services_to_stop_and_disable = ["alarma.service", "apagar.service", "reinicio.service", "rotativo.service", "serial.service", "GPS.service", "OBD.service", "interfaz_manual.service", "interfaz_manual.service", "gps_imu_logger.service", "serverweb.service", "decodificadorTXTaCSV.service", "app.service", "updater.service"]
-    for service in services_to_stop_and_disable:
-        try:
-            proc = subprocess.run(
-                ["systemctl", "stop", service],
-                capture_output=True,
-                text=True
-            )
-            if proc.returncode == 0:
-                log_info(f"Servicio '{service}' detenido correctamente.")
-                proc = subprocess.run(
-                    ["systemctl", "disable", service],
-                    capture_output=True,
-                    text=True
-                )
-                if proc.returncode == 0:
-                    log_info(f"Servicio '{service}' deshabilitado correctamente.")
-            else:
-                stderr = (proc.stderr or "").lower()
-                stdout = (proc.stdout or "").lower()
-                # Detectar unidades no encontradas o mensajes comunes de error
-                if ("could not be found" in stderr or "not-found" in stderr or
-                        "not found" in stderr or "unit" in stderr and "could not" in stderr):
-                    log_warn(f"Servicio '{service}' no encontrado. Se omite.")
-                else:
-                    log_warn(f"Fallo al detener '{service}' (code={proc.returncode}). "
-                             f"STDOUT: {stdout.strip()} STDERR: {stderr.strip()}")
-        except FileNotFoundError:
-            log_warn("systemctl no encontrado en este sistema. No se pudieron detener servicios con systemctl.")
-            break
-        except Exception as e:
-            log_warn(f"Error inesperado al detener '{service}': {e}")
+    services_to_stop = ["app.service", "updater.service"]
+    for service in services_to_stop:
+        run_command(["systemctl", "stop", service], ignore_errors=True)
+        run_command(["systemctl", "disable", service], ignore_errors=True)
+    log_ok("Servicios anteriores (si existían) detenidos y deshabilitados.")
 
     log_step("Paso de Inicialización: Habilitando señal de alimentación...")
     try:
@@ -295,10 +235,9 @@ def main():
         GPIO.setwarnings(False)
         GPIO.setup(POWER_OK_GPIO, GPIO.OUT)
         GPIO.output(POWER_OK_GPIO, GPIO.HIGH)
-        log_ok(f"Señal de alimentación habilitada en BCM pin {POWER_OK_GPIO} (3.3V) vía RPi.GPIO.")
-    except (ImportError, RuntimeError) as e:
-        log_warn(f"No se pudo inicializar RPi.GPIO ({e}).")
-        log_info("Intentando instalar 'python3-rpi.gpio' y reintentando...")
+        log_ok(f"Señal de alimentación habilitada en BCM pin {POWER_OK_GPIO}.")
+    except (ImportError, RuntimeError):
+        log_info("Instalando 'python3-rpi.gpio'...")
         run_command(["apt-get", "update"])
         run_command(["apt-get", "install", "-y", "python3-rpi.gpio"])
         try:
@@ -307,286 +246,192 @@ def main():
             GPIO.setwarnings(False)
             GPIO.setup(POWER_OK_GPIO, GPIO.OUT)
             GPIO.output(POWER_OK_GPIO, GPIO.HIGH)
-            log_ok("¡Éxito! RPi.GPIO instalado y señal de alimentación habilitada.")
+            log_ok("RPi.GPIO instalado y señal de alimentación habilitada.")
         except Exception as final_e:
             log_fail(f"Falló el segundo intento de inicializar GPIO: {final_e}")
 
-
     script_dir = os.path.dirname(os.path.realpath(__file__))
     key_src_path = os.path.join(script_dir, "deploy_key")
-
     if not os.path.exists(key_src_path):
         log_fail("No se encontró el archivo 'deploy_key' en el mismo directorio que el instalador.")
     log_ok("Comprobaciones previas superadas.")
 
     log_step("Paso 1: Recopilando información necesaria...")
-    repo_url = input("Introduce la URL SSH de tu repositorio Git (git@github.com:p12regaf/fire-truck-app.git): ")
-    if not repo_url:
-        repo_url = "git@github.com:p12regaf/fire-truck-app.git"
-    git_branch = input("Introduce el nombre de la rama a desplegar (ej. main) [main]: ")
-    if not git_branch:
-        git_branch = "main"
+    repo_url = input(f"Introduce la URL SSH del repositorio Git [git@github.com:p12regaf/fire-truck-app.git]: ") or "git@github.com:p12regaf/fire-truck-app.git"
+    git_branch = input("Introduce la rama a desplegar [main]: ") or "main"
 
-    device_id = None
-    while True:
-        user_input = input("Introduce el número de dispositivo de 3 dígitos (ej. 001, 042): ").strip()
-        if user_input.isdigit() and len(user_input) == 3:
-            device_id = user_input
-            break
-        else:
-            print(f"{C_WARNING}Entrada inválida. Por favor, introduce exactamente 3 números.{C_ENDC}")
+    device_id = ""
+    while not (device_id.isdigit() and len(device_id) == 3):
+        device_id = input("Introduce el número de dispositivo de 3 dígitos (ej. 001): ").strip()
 
-    rotary_pin = None
     DEFAULT_ROTARY_PIN = "22"
-    while True:
-        user_input = input(f"Introduce el pin BCM para el rotativo (ej. {DEFAULT_ROTARY_PIN}) [{DEFAULT_ROTARY_PIN}]: ").strip()
-        if not user_input:
-            rotary_pin = DEFAULT_ROTARY_PIN
-            break
-        if user_input.isdigit():
-            rotary_pin = user_input
-            break
-        else:
-            print(f"{C_WARNING}Entrada inválida. Por favor, introduce un número de pin válido.{C_ENDC}")
+    rotary_pin = ""
+    while not rotary_pin.isdigit():
+        rotary_pin = input(f"Introduce el pin BCM para el rotativo [{DEFAULT_ROTARY_PIN}]: ").strip() or DEFAULT_ROTARY_PIN
     log_ok("Información recopilada.")
 
     log_step("Paso 2: Actualizando sistema e instalando dependencias...")
     env = os.environ.copy()
     env["DEBIAN_FRONTEND"] = "noninteractive"
     run_command(["apt-get", "update"], env=env)
-
-    # Preguntar si se desea hacer un upgrade completo (puede tardar mucho)
-    try:
-        choice = input("¿Deseas ejecutar 'apt-get upgrade -y' ahora? Esto puede tardar mucho. (s/n) [n]: ").strip().lower()
-    except (EOFError, KeyboardInterrupt):
-        choice = "n"
-    if choice in ("s", "y", "si", "yes"):
-        log_step("Ejecutando 'apt-get upgrade -y'...")
+    
+    upgrade_choice = input("¿Deseas ejecutar 'apt-get upgrade -y' ahora? (s/n) [n]: ").strip().lower()
+    if upgrade_choice.startswith('s'):
+        log_info("Ejecutando 'apt-get upgrade -y'...")
         run_command(["apt-get", "upgrade", "-y"], env=env)
-        log_ok("Upgrade completado.")
-    else:
-        log_info("Se omitió 'apt-get upgrade'.")
+    
     run_command(["apt-get", "install", "-y", "git", "python3-pip", "python3-venv", "can-utils", "i2c-tools"], env=env)
     log_ok("Sistema y dependencias listos.")
 
-    try:
-        wifi_choice = input("¿Deseas configurar la red Wi-Fi de respaldo ahora? (s/n) [n]: ").strip().lower()
-    except (EOFError, KeyboardInterrupt):
-        wifi_choice = "n"
-    if wifi_choice in ("s", "y", "si", "yes"):
+    wifi_choice = input("¿Deseas configurar una red Wi-Fi de respaldo? (s/n) [n]: ").strip().lower()
+    if wifi_choice.startswith('s'):
         configure_fallback_wifi()
-    else:
-        log_info("Se omitió la configuración de la red Wi-Fi de respaldo.")
 
     log_step("Paso 3: Configurando usuario y directorios...")
     try:
         pwd.getpwnam(TARGET_USER)
-        log_info(f"El usuario '{TARGET_USER}' ya existe. Asegurando membresía de grupos...")
-        run_command(["usermod", "-a", "-G", "sudo,gpio,i2c,dialout", TARGET_USER])
+        log_info(f"El usuario '{TARGET_USER}' ya existe.")
     except KeyError:
         log_info(f"Creando usuario '{TARGET_USER}'...")
-        run_command(["useradd", "-m", "-s", "/bin/bash", "-U", "-G", "sudo,gpio,i2c,dialout", TARGET_USER])
+        run_command(["useradd", "-m", "-s", "/bin/bash", TARGET_USER])
         log_warn(f"¡ACCIÓN REQUERIDA! Se ha creado el usuario '{TARGET_USER}'.")
-        log_warn(f"Por favor, establece una contraseña para él ejecutando 'sudo passwd {TARGET_USER}' después.")
+        log_warn(f"Establece una contraseña con: 'sudo passwd {TARGET_USER}'")
+    
+    log_info("Añadiendo usuario a los grupos necesarios (sudo, gpio, i2c, dialout)...")
+    run_command(["usermod", "-a", "-G", "sudo,gpio,i2c,dialout", TARGET_USER])
 
     log_info("Creando directorios de la aplicación...")
-    run_command(["mkdir", "-p", APP_DIR], as_user=TARGET_USER)
-    run_command(["mkdir", "-p", LOG_DIR], as_user=TARGET_USER)
-    run_command(["mkdir", "-p", DATA_DIR], as_user=TARGET_USER)
+    for d in [APP_DIR, LOG_DIR, DATA_DIR]:
+        run_command(["mkdir", "-p", d], as_user=TARGET_USER)
+    log_ok("Usuario y directorios configurados.")
+    
+    # --- INICIO DE LA CORRECCIÓN DE PERMISOS ---
+    log_step("Paso 4: Instalando Deploy Key de Git de forma segura...")
+    key_dir = os.path.join(HOME_DIR, ".ssh")
+    key_dest_path = os.path.join(key_dir, "id_ed25519")
     
     user_info = pwd.getpwnam(TARGET_USER)
     uid, gid = user_info.pw_uid, user_info.pw_gid
 
-    # # Cambiar propietario de forma explícita y segura solo a lo necesario
-    # log_info(f"Asegurando permisos para el usuario '{TARGET_USER}'...")
-    # dirs_to_own = [HOME_DIR, APP_DIR, LOG_DIR, DATA_DIR]
-    # for d in dirs_to_own:
-    #     try:
-    #         # Cambiamos el propietario del directorio y todo su contenido de forma recursiva.
-    #         # El comando 'chown -R' es más atómico y robusto para esto que un bucle en Python.
-    #         run_command(["chown", "-R", f"{uid}:{gid}", d])
-    #     except Exception as e:
-    #         # Añadimos una advertencia en lugar de un fallo si algo va mal aquí,
-    #         # ya que el fallo principal era el bucle 'os.walk'.
-    #         log_warn(f"No se pudo cambiar el propietario de '{d}' de forma recursiva: {e}")
-            
-    log_ok("Usuario y directorios configurados.")
-
-    log_step("Limpiando instalación anterior...")
-    old_programs_dir = os.path.join(HOME_DIR, "/Documentos/.PROGRAMS")
-    if os.path.exists(old_programs_dir):
-        try:
-            user_choice = input(f"¿Deseas eliminar el directorio anterior ({old_programs_dir})? (s/n) [s]: ").strip().lower()
-        except (EOFError, KeyboardInterrupt):
-            user_choice = "s"
-        
-        if user_choice in ("s", "y", "si", "yes", ""):
-            log_info(f"Eliminando directorio anterior: {old_programs_dir}")
-            shutil.rmtree(old_programs_dir)
-            log_ok("Directorio anterior eliminado correctamente.")
-        else:
-            log_info("Se omitió la eliminación del directorio anterior.")
-    else:
-        log_info("No se encontró directorio anterior. Continuando...")
-
-
-    log_step("Paso 4: Instalando Deploy Key de Git...")
-    key_dir = os.path.join(HOME_DIR, ".ssh")
-    key_dest_path = os.path.join(key_dir, "id_ed25519")
-
+    # Crear el directorio .ssh con permisos correctos (700) y propietario correcto
+    log_info("Creando directorio .ssh con permisos 700...")
     os.makedirs(key_dir, mode=0o700, exist_ok=True)
+    shutil.chown(key_dir, user=uid, group=gid)
+
+    # Copiar y establecer permisos y propietario de la clave
+    log_info("Copiando clave privada con permisos 600...")
     shutil.copy(key_src_path, key_dest_path)
     os.chmod(key_dest_path, 0o600)
-    shutil.chown(key_dir, user=uid, group=gid)
     shutil.chown(key_dest_path, user=uid, group=gid)
 
+    # Añadir host de Git a known_hosts
     git_host = repo_url.split('@')[1].split(':')[0]
     log_info(f"Añadiendo el host de Git ({git_host}) a known_hosts...")
     known_hosts_path = os.path.join(key_dir, "known_hosts")
     
-    keyscan_result = run_command(["ssh-keyscan", git_host])
-    
-    existing_keys = set()
+    # Ejecutamos ssh-keyscan como el usuario final para evitar problemas de permisos
+    run_command(["ssh-keyscan", "-H", git_host], as_user=TARGET_USER)
+    keyscan_result = run_command(["ssh-keyscan", "-H", git_host], as_user=TARGET_USER)
+
+    # Usamos 'tee' con 'sudo' para escribir el archivo como root, pero luego ajustamos el dueño.
+    add_key_cmd = f"echo '{keyscan_result.stdout.strip()}' >> {known_hosts_path}"
+    run_command(['sh', '-c', add_key_cmd], as_user=TARGET_USER)
+    # Aseguramos que el archivo known_hosts también pertenece al usuario
     if os.path.exists(known_hosts_path):
-        with open(known_hosts_path, 'r') as f:
-            existing_keys = set(line.strip() for line in f)
-
-    new_keys = set(line.strip() for line in keyscan_result.stdout.splitlines())
-    all_keys = sorted(list(existing_keys.union(new_keys)))
+        shutil.chown(known_hosts_path, user=uid, group=gid)
     
-    with open(known_hosts_path, 'w') as f:
-        f.write('\n'.join(all_keys) + '\n')
-        
-    shutil.chown(known_hosts_path, user=uid, group=gid)
-    log_ok("Deploy Key instalada correctamente.")
-
+    log_ok("Deploy Key instalada y configurada correctamente.")
+    # --- FIN DE LA CORRECCIÓN DE PERMISOS ---
 
     log_step(f"Paso 5: Configurando periféricos en {BOOT_CONFIG_FILE}...")
     ensure_config_line("dtparam=i2c_arm=", "dtparam=i2c_arm=on", "# Habilitar I2C y SPI")
     ensure_config_line("dtparam=spi=", "dtparam=spi=on")
 
-    log_step("Configurando módulo CAN...")
-    try:
-        can_choice = input("¿Deseas configurar el módulo CAN? (antiguo/nuevo/no) [no]: ").strip().lower()
-    except (EOFError, KeyboardInterrupt):
-        can_choice = "no"
+    can_choice = input("Configurar módulo CAN? (antiguo/nuevo/no) [no]: ").strip().lower()
+    if can_choice.startswith('a'):
+        ensure_config_line("dtoverlay=mcp2515-can0", "dtoverlay=mcp2515-can0,oscillator=16000000,interrupt=25", "# CAN bus (antiguo)")
+    elif can_choice.startswith('n'):
+        ensure_config_line("dtoverlay=mcp2515-can0", "dtoverlay=mcp2515-can0,oscillator=16000000,interrupt=23", "# CAN bus (nuevo)")
     
-    if can_choice in ("a", "o", "antiguo", "old"):
-        # TODO: Verificar si el interrupt 25 es correcto para el módulo antiguo
-        can_config = "dtoverlay=mcp2515-can0,oscillator=16000000,interrupt=25"
-        log_info("Configurando CAN con interrupt=25 (módulo antiguo).")
-        ensure_config_line("dtoverlay=mcp2515-can0", can_config, "# Habilitar CAN bus (fire-truck-app)")
-    elif can_choice in ("nuevo", "new"):
-        # TODO: Verificar si el interrupt 23 es correcto para el módulo nuevo
-        can_config = "dtoverlay=mcp2515-can0,oscillator=16000000,interrupt=23"
-        log_info("Configurando CAN con interrupt=23 (módulo nuevo).")
-        ensure_config_line("dtoverlay=mcp2515-can0", can_config, "# Habilitar CAN bus (fire-truck-app)")
-    else:
-        log_info("Se omitió la configuración del módulo CAN.")
-    ensure_config_line("dtoverlay=i2c-rtc,ds3231", "dtoverlay=i2c-rtc,ds3231", "# Habilitar RTC DS3231 (fire-truck-app)")
-    ensure_config_line("enable_uart=", "enable_uart=1", "# Habilitar UART y deshabilitar Bluetooth (fire-truck-app)")
+    ensure_config_line("dtoverlay=i2c-rtc,ds3231", "dtoverlay=i2c-rtc,ds3231", "# Habilitar RTC DS3231")
+    ensure_config_line("enable_uart=", "enable_uart=1", "# Habilitar UART y deshabilitar Bluetooth")
     ensure_config_line("dtoverlay=disable-bt", "dtoverlay=disable-bt")
     
     log_info("Deshabilitando fake-hwclock para dar prioridad al RTC físico...")
-    try:
-        run_command(["apt-get", "-y", "remove", "fake-hwclock"])
-        run_command(["update-rc.d", "-f", "fake-hwclock", "remove"])
-    except subprocess.CalledProcessError as e:
-        log_warn(f"No se pudo remover fake-hwclock (quizás ya no estaba instalado): {e.stderr}")
+    run_command(["apt-get", "-y", "remove", "fake-hwclock"], ignore_errors=True)
+    run_command(["update-rc.d", "-f", "fake-hwclock", "remove"], ignore_errors=True)
     log_ok("Configuración de hardware completada.")
-
     disable_serial_console()
-
 
     log_step("Paso 6: Clonando repositorio de la aplicación...")
     if os.path.exists(os.path.join(APP_DIR, ".git")):
-        log_warn("El directorio de la aplicación ya existe. Se forzará la actualización.")
+        log_warn("El repositorio ya existe. Forzando actualización...")
         run_command(["git", "-C", APP_DIR, "fetch", "--all"], as_user=TARGET_USER)
         run_command(["git", "-C", APP_DIR, "reset", "--hard", f"origin/{git_branch}"], as_user=TARGET_USER)
         run_command(["git", "-C", APP_DIR, "clean", "-fdx"], as_user=TARGET_USER)
     else:
         run_command(["git", "clone", "--branch", git_branch, repo_url, APP_DIR], as_user=TARGET_USER)
     log_ok(f"Repositorio clonado/actualizado en {APP_DIR}.")
+    
+    run_command(["chown", "-R", f"{uid}:{gid}", APP_DIR])
 
-    log_step("Habilitando servicio SSH...")
-    run_command(["systemctl", "enable", "ssh"])
-    run_command(["systemctl", "start", "ssh"])
-    log_ok("Servicio SSH habilitado y arrancado.")
-
-    log_step("Paso 7: Configurando ID de dispositivo en config.yaml...")
+    log_step("Paso 7: Configurando ID de dispositivo y pin en config.yaml...")
     TEMPLATE_CONFIG_PATH = os.path.join(APP_DIR, "config", "config.yaml.template")
     CONFIG_YAML_PATH = os.path.join(APP_DIR, "config", "config.yaml")
     try:
-        # 1. Copiar la plantilla para crear el archivo de configuración local
-        log_info(f"Copiando plantilla de configuración a '{CONFIG_YAML_PATH}'...")
         shutil.copy(TEMPLATE_CONFIG_PATH, CONFIG_YAML_PATH)
-
-        # 2. Leer el nuevo archivo de configuración local
         with open(CONFIG_YAML_PATH, 'r') as f:
-            config_content = f.read()
+            content = f.read()
         
-        # 3. Modificar el contenido con el ID del dispositivo
-        new_config_content = re.sub(
-            r'(\s*device_number:\s*")[^"]*(")',
-            fr'\g<1>{device_id}\g<2>',
-            config_content
-        )
+        content = re.sub(r'device_number:\s*"\d+"', f'device_number: "{device_id}"', content)
+        content = re.sub(r'pin:\s*\d+\s*#\s*GPIO_ROTATIVO_PIN', f'pin: {rotary_pin} # GPIO_ROTATIVO_PIN', content)
 
-        # Modificar también el pin del rotativo
-        new_config_content = re.sub(
-            r'(\s*rotary_pin:\s*)\d+',
-            fr'\g<1>{rotary_pin}',
-            new_config_content
-        )
-        
-        if new_config_content == config_content:
-            log_warn("No se encontró el campo 'device_number' en la plantilla. No se pudo actualizar el ID.")
-        else:
-            log_info(f"ID de dispositivo establecido a '{device_id}'.")
-
-        # 4. Escribir los cambios en el archivo de configuración local
         with open(CONFIG_YAML_PATH, 'w') as f:
-            f.write(new_config_content)
-        log_ok("El archivo config.yaml ha sido creado y actualizado con el ID de equipo.")
-            
-    except FileNotFoundError:
-        log_fail(f"No se encontró el archivo de plantilla de configuración en '{TEMPLATE_CONFIG_PATH}'. ¿Está en el repositorio?")
-    except (IOError, shutil.Error) as e:
+            f.write(content)
+        
+        shutil.chown(CONFIG_YAML_PATH, user=uid, group=gid)
+        log_ok("Archivo config.yaml creado y actualizado.")
+    except Exception as e:
         log_fail(f"No se pudo crear o modificar {CONFIG_YAML_PATH}: {e}")
-
 
     log_step("Paso 8: Configurando entorno virtual y dependencias...")
     venv_path = os.path.join(APP_DIR, ".venv")
     pip_path = os.path.join(venv_path, "bin/pip")
-    requirements_path = os.path.join(APP_DIR, "requirements.txt")
-
+    req_path = os.path.join(APP_DIR, "requirements.txt")
     run_command(["python3", "-m", "venv", venv_path], as_user=TARGET_USER)
-    run_command([pip_path, "install", "-r", requirements_path], as_user=TARGET_USER)
+    run_command([pip_path, "install", "-r", req_path], as_user=TARGET_USER)
     log_ok("Entorno Python listo.")
     
-
+    # --- INICIO DE LA CORRECCIÓN DE SUDOERS ---
     log_step("Paso 9: Estableciendo permisos de sistema...")
-    log_info("Configurando sudo sin contraseña para shutdown/reboot...")
-    sudoers_file = "/etc/sudoers.d/99-fire-truck-app"
-    with open(sudoers_file, "w") as f:
-        f.write(f"{TARGET_USER} ALL=(ALL) NOPASSWD: /sbin/shutdown, /sbin/reboot\n")
-    os.chmod(sudoers_file, 0o440)
+    log_info("Configurando sudo sin contraseña para el actualizador y reinicios...")
+    sudoers_file_path = "/etc/sudoers.d/99-fire-truck-app"
+    sudo_rule = (
+        f"{TARGET_USER} ALL=(ALL) NOPASSWD: /sbin/shutdown, /sbin/reboot, "
+        f"/bin/systemctl stop app.service, /bin/systemctl start app.service\n"
+    )
+    with open(sudoers_file_path, "w") as f:
+        f.write(sudo_rule)
+    os.chmod(sudoers_file_path, 0o440)
+    # --- FIN DE LA CORRECCIÓN DE SUDOERS ---
 
     log_info("Haciendo ejecutables los scripts necesarios...")
     script_to_exec = os.path.join(APP_DIR, "scripts/check_and_install_update.sh")
     if os.path.exists(script_to_exec):
         st = os.stat(script_to_exec)
         os.chmod(script_to_exec, st.st_mode | stat.S_IEXEC)
-    log_ok("Permisos establecidos.")
+    log_ok("Permisos de sistema establecidos.")
 
-
-    log_step("Paso 10: Instalando servicios systemd...")
-    services = ["app.service", "updater.service"]
-    for service in services:
+    log_step("Paso 10: Instalando y habilitando servicios systemd...")
+    # --- INICIO DE LA MEJORA DE RED ---
+    log_info("Habilitando el servicio de espera de red para un arranque robusto...")
+    run_command(["systemctl", "enable", "systemd-networkd-wait-online.service"], ignore_errors=True)
+    # --- FIN DE LA MEJORA DE RED ---
+    
+    for service in ["app.service", "updater.service"]:
         src = os.path.join(APP_DIR, "services", service)
         dest = os.path.join("/etc/systemd/system", service)
         if os.path.exists(src):
-            log_info(f"Copiando {service} a {dest}")
             shutil.copy(src, dest)
         else:
             log_warn(f"No se encontró el archivo de servicio: {src}")
@@ -597,10 +442,10 @@ def main():
     log_ok("Servicios instalados y habilitados para el arranque.")
 
     log_step("¡Instalación completada!")
-    log_warn("Es NECESARIO reiniciar el sistema para aplicar los cambios de hardware y red.")
+    log_warn("Es NECESARIO reiniciar para aplicar todos los cambios.")
     
-    reboot_choice = input("¿Deseas reiniciar la Raspberry Pi ahora? (s/n): ").lower()
-    if reboot_choice in ("s", "y", "si", "yes"):
+    reboot_choice = input("¿Deseas reiniciar la Raspberry Pi ahora? (s/n) [s]: ").lower().strip()
+    if not reboot_choice or reboot_choice.startswith('s'):
         log_info("Reiniciando el sistema ahora...")
         run_command(["reboot"])
     else:
