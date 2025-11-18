@@ -44,6 +44,7 @@ class SessionManager:
 
         self.data_root = paths_config.get('data_root', '/tmp/fire-truck-app_data')
         self.db_path = paths_config.get('session_db', '/tmp/fire-truck-app_session.json')
+        self.shutdown_state_file = paths_config.get('shutdown_state_file')
         
         device_number = system_config.get('device_number', '000')
         self.device_name = f"DOBACK{device_number}"
@@ -51,12 +52,29 @@ class SessionManager:
         self.lock = Lock()
         
         now = datetime.now()
+        
         self.today_str_ymd = now.strftime('%Y%m%d')
         self.session_time = now
 
         self.current_session_id = self._initialize_session()
         log.info(f"Sesión activa: {self.current_session_id} para el día {self.today_str_ymd}.")
 
+    def _read_and_clear_shutdown_state(self) -> str:
+        """Lee el motivo del último apagado y borra el archivo."""
+        if not self.shutdown_state_file or not os.path.exists(self.shutdown_state_file):
+            return "UNCLEAN" # No hay archivo, fue un apagado brusco o un crash.
+        
+        try:
+            with open(self.shutdown_state_file, 'r') as f:
+                state = json.load(f)
+            os.remove(self.shutdown_state_file) # Limpiar para el siguiente ciclo
+            reason = state.get("reason", "UNKNOWN")
+            log.info(f"Detectado archivo de estado de apagado. Motivo: {reason}")
+            return reason
+        except (json.JSONDecodeError, IOError, OSError) as e:
+            log.error(f"No se pudo leer o eliminar el archivo de estado de apagado: {e}")
+            return "STATE_ERROR"
+        
     def _load_session_db(self) -> dict:
         if not os.path.exists(self.db_path):
             log.warning(f"Archivo de sesión no encontrado en {self.db_path}. Creando uno nuevo.")
@@ -77,14 +95,30 @@ class SessionManager:
             
     def _initialize_session(self) -> int:
         with self.lock:
+            shutdown_reason = self._read_and_clear_shutdown_state()
             session_data = self._load_session_db()
-            counters = session_data.get("session_counters", {})
-            last_session_today = counters.get(self.today_str_ymd, 0)
-            new_session_id = last_session_today + 1
-            counters[self.today_str_ymd] = new_session_id
-            session_data["session_counters"] = counters
-            self._save_session_db(session_data)
-            return new_session_id
+            last_info = session_data.get("last_session_info")
+
+            if shutdown_reason == "POWER_OFF" or not last_info:
+                if not last_info:
+                    log.info("Primera ejecución detectada. Creando nueva sesión.")
+                else:
+                    log.info("Apagado normal detectado (POWER_OFF). Creando nueva sesión.")
+                
+                counters = session_data.get("session_counters", {})
+                new_session_id = counters.get(self.today_str_ymd, 0) + 1
+                counters[self.today_str_ymd] = new_session_id
+                
+                session_data["session_counters"] = counters
+                session_data["last_session_info"] = {
+                    "date": self.today_str_ymd,
+                    "id": new_session_id
+                }
+                self._save_session_db(session_data)
+                return new_session_id
+            else:
+                log.warning(f"Reanudando sesión anterior debido a un apagado no estándar (motivo: {shutdown_reason}).")
+                return last_info["id"]
 
     def _get_folder_name(self, internal_type: str) -> str:
         """Devuelve el nombre de la carpeta formateado."""
