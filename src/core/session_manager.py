@@ -97,28 +97,35 @@ class SessionManager:
         with self.lock:
             shutdown_reason = self._read_and_clear_shutdown_state()
             session_data = self._load_session_db()
-            last_info = session_data.get("last_session_info")
+            counters = session_data.get("session_counters", {})
+            last_session_today = counters.get(self.today_str_ymd, 0)
+            new_session_id = last_session_today + 1
+            counters[self.today_str_ymd] = new_session_id
+            session_data["session_counters"] = counters
+            self._save_session_db(session_data)
+            return new_session_id
+            # last_info = session_data.get("last_session_info")
 
-            if shutdown_reason == "POWER_OFF" or not last_info:
-                if not last_info:
-                    log.info("Primera ejecución detectada. Creando nueva sesión.")
-                else:
-                    log.info("Apagado normal detectado (POWER_OFF). Creando nueva sesión.")
+            # if shutdown_reason == "POWER_OFF" or not last_info:
+            #     if not last_info:
+            #         log.info("Primera ejecución detectada. Creando nueva sesión.")
+            #     else:
+            #         log.info("Apagado normal detectado (POWER_OFF). Creando nueva sesión.")
                 
-                counters = session_data.get("session_counters", {})
-                new_session_id = counters.get(self.today_str_ymd, 0) + 1
-                counters[self.today_str_ymd] = new_session_id
+            #     counters = session_data.get("session_counters", {})
+            #     new_session_id = counters.get(self.today_str_ymd, 0) + 1
+            #     counters[self.today_str_ymd] = new_session_id
                 
-                session_data["session_counters"] = counters
-                session_data["last_session_info"] = {
-                    "date": self.today_str_ymd,
-                    "id": new_session_id
-                }
-                self._save_session_db(session_data)
-                return new_session_id
-            else:
-                log.warning(f"Reanudando sesión anterior debido a un apagado no estándar (motivo: {shutdown_reason}).")
-                return last_info["id"]
+            #     session_data["session_counters"] = counters
+            #     session_data["last_session_info"] = {
+            #         "date": self.today_str_ymd,
+            #         "id": new_session_id
+            #     }
+            #     self._save_session_db(session_data)
+            #     return new_session_id
+            # else:
+            #     log.warning(f"Reanudando sesión anterior debido a un apagado no estándar (motivo: {shutdown_reason}).")
+            #     return last_info["id"]
 
     def _get_folder_name(self, internal_type: str) -> str:
         """Devuelve el nombre de la carpeta formateado."""
