@@ -4,6 +4,8 @@ import threading
 import time
 import RPi.GPIO as GPIO
 import os
+import json
+from datetime import datetime
 
 log = logging.getLogger(__name__)
 
@@ -21,6 +23,8 @@ class AlarmMonitor(threading.Thread):
         
         alarm_config = config.get('system', {}).get('alarm_monitor', {})
         self.pin = alarm_config.get('pin')
+
+        self.shutdown_state_file = config.get('paths', {}).get('shutdown_state_file')
         
         pull_config_str = alarm_config.get('pull_up_down', 'PUD_DOWN').upper()
 
@@ -61,6 +65,7 @@ class AlarmMonitor(threading.Thread):
                     log.info("Los servicios de la app han finalizado correctamente.")
 
                 # 3. Apagar el sistema operativo
+                self._write_shutdown_reason("EMERGENCY_SHUTDOWN")
                 self._shutdown_system()
                 break
 
@@ -68,6 +73,17 @@ class AlarmMonitor(threading.Thread):
 
         self._cleanup()
         log.info("AlarmMonitor detenido.")
+
+    def _write_shutdown_reason(self, reason: str):
+        if not self.shutdown_state_file:
+            log.error("No se ha configurado 'shutdown_state_file'. No se puede guardar el motivo del apagado.")
+            return
+        try:
+            with open(self.shutdown_state_file, 'w') as f:
+                json.dump({"reason": reason, "timestamp": datetime.now().isoformat()}, f)
+            log.info(f"Motivo del apagado ('{reason}') guardado en {self.shutdown_state_file}")
+        except IOError as e:
+            log.error(f"No se pudo escribir el archivo de estado de apagado: {e}")
 
     def _setup(self) -> bool:
         if self.pin is None:

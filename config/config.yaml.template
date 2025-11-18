@@ -39,6 +39,7 @@ paths:
   # Un único archivo para gestionar todos los contadores de sesión.
   session_db: "/home/cosigein/fire-truck-app_session_data.json"
   updater_log: "/home/cosigein/logs/updater.log"
+  shutdown_state_file: "/home/cosigein/fire-truck-app/shutdown_state.json"
 
 
 ftp:

@@ -4,6 +4,7 @@ import threading
 import time
 import RPi.GPIO as GPIO 
 import os
+import json
 
 log = logging.getLogger(__name__)
 
@@ -63,6 +64,7 @@ class PowerMonitor(threading.Thread):
                     log.info("Los servicios de la app han finalizado correctamente.")
 
                 # 3. Apagar el sistema operativo
+                self._write_shutdown_reason("POWER_OFF")
                 self._shutdown_system()
                 break # Salir del bucle
 
@@ -70,6 +72,17 @@ class PowerMonitor(threading.Thread):
 
         self._cleanup()
         log.info("PowerMonitor detenido.")
+
+    def _write_shutdown_reason(self, reason: str):
+        if not self.shutdown_state_file:
+            log.error("No se ha configurado 'shutdown_state_file'. No se puede guardar el motivo del apagado.")
+            return
+        try:
+            with open(self.shutdown_state_file, 'w') as f:
+                json.dump({"reason": reason, "timestamp": datetime.now().isoformat()}, f)
+            log.info(f"Motivo del apagado ('{reason}') guardado en {self.shutdown_state_file}")
+        except IOError as e:
+            log.error(f"No se pudo escribir el archivo de estado de apagado: {e}")
 
     def _setup(self) -> bool:
         # --- BLOQUE ELIMINADO ---
