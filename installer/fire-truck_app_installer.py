@@ -13,7 +13,7 @@
 #  USO:
 #  1. Copia este archivo y tu clave privada (renombrada a 'deploy_key') a la RPi.
 #  2. Hazlo ejecutable: chmod +x fire-truck_app_installer.py
-#  3. Ejecútalo con sudo: sudo python3 ./fire-truck_app_installer.py
+#  3. Ejecútalo con sudo: sudo python3 ./fire-truck_app_installer.py 
 #
 # =============================================================================
 
