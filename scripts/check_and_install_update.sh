@@ -15,12 +15,12 @@ log "--- Iniciando script de comprobación e instalación ---"
 # Navegar al directorio de la aplicación
 cd $APP_DIR || { log "ERROR: No se pudo acceder a $APP_DIR"; exit 1; }
 
-# Comprobar conectividad
-if ! ping -c 1 -W 5 8.8.8.8 &> /dev/null; then
-    log "No hay conexión a internet. Saliendo."
-    exit 0
-fi
-log "Conexión a internet detectada."
+# # Comprobar conectividad
+# if ! ping -c 1 -W 5 8.8.8.8 &> /dev/null; then
+#     log "No hay conexión a internet. Saliendo."
+#     exit 0
+# fi
+# log "Conexión a internet detectada."
 
 # Comprobar estado de Git como el usuario correcto
 log "Ejecutando comprobaciones de Git como usuario 'cosigein'..."
