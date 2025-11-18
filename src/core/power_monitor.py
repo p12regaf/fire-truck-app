@@ -23,6 +23,8 @@ class PowerMonitor(threading.Thread):
         power_config = config.get('system', {}).get('power_monitor', {})
         self.pin = power_config.get('pin')
         
+        self.shutdown_state_file = config.get('paths', {}).get('shutdown_state_file')
+
         pull_config_str = power_config.get('pull_up_down', 'PUD_UP').upper()
         
         try:
