@@ -9,6 +9,7 @@ Before=app.service
 Type=oneshot
 User=cosigein
 Group=cosigein
+ExecStartPre=/bin/sleep 10
 TimeoutStartSec=5min
 ExecStart=/home/cosigein/fire-truck-app/scripts/check_and_install_update.sh
 
