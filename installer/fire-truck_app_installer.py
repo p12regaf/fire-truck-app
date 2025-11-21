@@ -424,10 +424,8 @@ def main():
     log_ok("Permisos de sistema establecidos.")
 
     log_step("Paso 10: Instalando y habilitando servicios systemd...")
-    # --- INICIO DE LA MEJORA DE RED ---
     log_info("Habilitando el servicio de espera de red para un arranque robusto...")
     run_command(["systemctl", "enable", "systemd-networkd-wait-online.service"], ignore_errors=True)
-    # --- FIN DE LA MEJORA DE RED ---
     
     for service in ["app.service", "updater.service"]:
         src = os.path.join(APP_DIR, "services", service)
@@ -438,9 +436,13 @@ def main():
             log_warn(f"No se encontró el archivo de servicio: {src}")
 
     run_command(["systemctl", "daemon-reload"])
-    run_command(["systemctl", "enable", "app.service"])
+    
+    run_command(["systemctl", "disable", "app.service"]) 
+    
+    # Solo habilitamos el updater
     run_command(["systemctl", "enable", "updater.service"])
-    log_ok("Servicios instalados y habilitados para el arranque.")
+    
+    log_ok("Servicios instalados. Updater configurado como punto de entrada.")
 
     log_step("¡Instalación completada!")
     log_warn("Es NECESARIO reiniciar para aplicar todos los cambios.")
