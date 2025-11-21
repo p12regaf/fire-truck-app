@@ -365,15 +365,44 @@ def main():
     disable_serial_console()
 
     log_step("Paso 6: Clonando repositorio de la aplicación...")
-    if os.path.exists(os.path.join(APP_DIR, ".git")):
-        log_warn("El repositorio ya existe. Forzando actualización...")
-        run_command(["git", "-C", APP_DIR, "fetch", "--all"], as_user=TARGET_USER)
-        run_command(["git", "-C", APP_DIR, "reset", "--hard", f"origin/{git_branch}"], as_user=TARGET_USER)
-        run_command(["git", "-C", APP_DIR, "clean", "-fdx"], as_user=TARGET_USER)
-    else:
-        run_command(["git", "clone", "--branch", git_branch, repo_url, APP_DIR], as_user=TARGET_USER)
-    log_ok(f"Repositorio clonado/actualizado en {APP_DIR}.")
     
+    # Variable para controlar si necesitamos clonar desde cero
+    need_clean_clone = True
+
+    if os.path.exists(os.path.join(APP_DIR, ".git")):
+        log_info("El repositorio ya existe. Intentando actualizar...")
+        
+        # Intentamos hacer fetch ignorando errores iniciales para no matar el script
+        # Usamos ignore_errors=True para capturar el resultado nosotros mismos
+        fetch_result = run_command(["git", "-C", APP_DIR, "fetch", "--all"], as_user=TARGET_USER, ignore_errors=True)
+        
+        if fetch_result.returncode == 0:
+            # Si el fetch funcionó, hacemos el reset
+            reset_result = run_command(["git", "-C", APP_DIR, "reset", "--hard", f"origin/{git_branch}"], as_user=TARGET_USER, ignore_errors=True)
+            if reset_result.returncode == 0:
+                run_command(["git", "-C", APP_DIR, "clean", "-fdx"], as_user=TARGET_USER)
+                need_clean_clone = False
+                log_ok(f"Repositorio actualizado correctamente en {APP_DIR}.")
+            else:
+                 log_warn("El comando 'git reset' falló. El repositorio podría estar corrupto.")
+        else:
+            log_warn("El comando 'git fetch' falló. El repositorio local está corrupto.")
+
+    # Si la actualización falló o no existía el repo, borramos y clonamos de cero
+    if need_clean_clone:
+        if os.path.exists(APP_DIR):
+            log_warn("Eliminando repositorio corrupto o antiguo para realizar una instalación limpia...")
+            shutil.rmtree(APP_DIR, ignore_errors=True)
+            # Recreamos el directorio base si shutil lo borró todo
+            if not os.path.exists(APP_DIR):
+                os.makedirs(APP_DIR)
+                shutil.chown(APP_DIR, user=uid, group=gid)
+
+        log_info(f"Clonando repositorio ({git_branch}) desde cero...")
+        run_command(["git", "clone", "--branch", git_branch, repo_url, APP_DIR], as_user=TARGET_USER)
+        log_ok(f"Repositorio clonado exitosamente en {APP_DIR}.")
+    
+    # Aseguramos permisos finales
     run_command(["chown", "-R", f"{uid}:{gid}", APP_DIR])
 
     log_step("Paso 7: Configurando ID de dispositivo y pin en config.yaml...")
