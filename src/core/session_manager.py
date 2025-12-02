@@ -8,28 +8,23 @@ log = logging.getLogger(__name__)
 
 class SessionManager:
     """
-    Gestiona la creación de archivos de log diarios y el versionado de sesiones
-    dentro de esos archivos.
+    Gestiona la creación de archivos de log por sesión.
     """
-    # --- CAMBIO CLAVE ---
-    # Mapeo para nombres de CARPETAS, con la capitalización solicitada.
+    
     FOLDER_NAME_MAP = {
         "can": "CAN",
         "gps": "GPS",
-        "estabilometro": "estabilidad", # <-- Carpeta en minúsculas
+        "estabilometro": "estabilidad",
         "rotativo": "ROTATIVO"
     }
 
-    # Mapeo para el PREFIJO del FICHERO y el texto de la CABECERA.
-    # Se mantiene en mayúsculas para todos.
     FILE_PREFIX_MAP = {
         "can": "CAN",
         "gps": "GPS",
-        "estabilometro": "ESTABILIDAD", # <-- Prefijo de archivo en mayúsculas
+        "estabilometro": "ESTABILIDAD",
         "rotativo": "ROTATIVO"
     }
     
-    # Definición de las cabeceras de columnas con formato unificado (separado por ';')
     COLUMN_HEADERS = {
         "estabilometro": "ax;ay;az;gx;gy;gz;roll;pitch;yaw;timeantwifi;usciclo1;usciclo2;usciclo3;usciclo4;usciclo5;si;accmag;microsds;k3\n",
         "gps": "Timestamp;FechaGPS;HoraGPS;Latitud;Longitud;Altitud;HDOP;Fix;NumSats;Velocidad(km/h)\n",
@@ -54,18 +49,19 @@ class SessionManager:
         self.today_str_ymd = now.strftime('%Y%m%d')
         self.session_time = now
 
+        # Inicializar sesión y guardar rutas activas para que el FTP no las toque
         self.current_session_id = self._initialize_session()
+        self.active_log_files = {} # Almacena {tipo: ruta_completa}
+        
         log.info(f"Sesión activa: {self.current_session_id} para el día {self.today_str_ymd}.")
 
     def _load_session_db(self) -> dict:
         if not os.path.exists(self.db_path):
-            log.warning(f"Archivo de sesión no encontrado en {self.db_path}. Creando uno nuevo.")
             return {"session_counters": {}}
         try:
             with open(self.db_path, 'r') as f:
                 return json.load(f)
-        except (json.JSONDecodeError, IOError) as e:
-            log.error(f"No se pudo cargar o parsear el archivo de sesión. Creando uno nuevo. Error: {e}")
+        except (json.JSONDecodeError, IOError):
             return {"session_counters": {}}
 
     def _save_session_db(self, session_data: dict):
@@ -73,7 +69,7 @@ class SessionManager:
             with open(self.db_path, 'w') as f:
                 json.dump(session_data, f, indent=4)
         except IOError as e:
-            log.error(f"No se pudo guardar el archivo de sesión en {self.db_path}: {e}")
+            log.error(f"Error guardando DB de sesión: {e}")
             
     def _initialize_session(self) -> int:
         with self.lock:
@@ -87,40 +83,46 @@ class SessionManager:
             return new_session_id
 
     def _get_folder_name(self, internal_type: str) -> str:
-        """Devuelve el nombre de la carpeta formateado."""
         return self.FOLDER_NAME_MAP.get(internal_type, internal_type.upper())
 
     def _get_file_prefix_name(self, internal_type: str) -> str:
-        """Devuelve el prefijo para el nombre del fichero y la cabecera."""
         return self.FILE_PREFIX_MAP.get(internal_type, internal_type.upper())
 
     def ensure_data_directories(self, active_data_types: list):
-        """Crea los directorios base para cada tipo de dato si no existen."""
-        log.info("Asegurando la existencia de directorios de datos...")
         for data_type in active_data_types:
             folder_name = self._get_folder_name(data_type)
             dir_path = os.path.join(self.data_root, folder_name)
-            try:
-                os.makedirs(dir_path, exist_ok=True)
-            except OSError as e:
-                log.critical(f"No se pudo crear el directorio de datos '{dir_path}': {e}")
+            os.makedirs(dir_path, exist_ok=True)
 
     def get_log_path(self, data_type: str) -> str:
-        """Obtiene la ruta del archivo de log diario para un tipo de dato."""
+        """
+        Obtiene la ruta única para esta sesión.
+        Formato: TIPO_DOBACKXXX_YYYYMMDD_S{ID}.txt
+        """
+        if data_type in self.active_log_files:
+            return self.active_log_files[data_type]
+
         folder_name = self._get_folder_name(data_type)
         file_prefix = self._get_file_prefix_name(data_type)
-        filename = f"{file_prefix}_{self.device_name}_{self.today_str_ymd}.txt"
-        return os.path.join(self.data_root, folder_name, filename)
+        # CAMBIO: Se añade _S{session_id} al nombre del archivo
+        filename = f"{file_prefix}_{self.device_name}_{self.today_str_ymd}_S{self.current_session_id}.txt"
+        full_path = os.path.join(self.data_root, folder_name, filename)
+        
+        # Registrar como activo
+        self.active_log_files[data_type] = full_path
+        return full_path
 
     def get_realtime_log_path(self, data_type: str) -> str:
-        """Obtiene la ruta para el archivo de estado en tiempo real."""
         folder_name = self._get_folder_name(data_type)
         file_prefix = self._get_file_prefix_name(data_type)
         filename = f"{file_prefix}_{self.device_name}_RealTime.txt"
         return os.path.join(self.data_root, folder_name, filename)
+    
+    def is_file_active(self, filepath: str) -> bool:
+        """Comprueba si un archivo pertenece a la sesión actual activa."""
+        return filepath in self.active_log_files.values()
 
     def get_session_header(self, data_type: str) -> str:
-        """Genera la cabecera de la sesión con formato unificado para todos los logs."""
         type_name = self._get_file_prefix_name(data_type)
         timestamp_str = self.session_time.strftime('%d/%m/%Y %H:%M:%S')
         terminator = ";\n"
@@ -131,5 +133,4 @@ class SessionManager:
         return header
 
     def get_column_header(self, data_type: str) -> str:
-        """Devuelve la cadena de la cabecera de columnas para un tipo de dato."""
         return self.COLUMN_HEADERS.get(data_type, "")
