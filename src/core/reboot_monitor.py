@@ -33,11 +33,14 @@ class RebootMonitor(threading.Thread):
         # No hay bucle. La única tarea es poner el pin en ALTO.
         # La configuración del pin como salida se hace en AppController.
         try:
+            log.info(f"RebootMonitor: Intentando poner el pin {self.pin} en ALTO (HIGH)...")
             GPIO.output(self.pin, GPIO.HIGH)
             log.info(f"RebootMonitor: Pin {self.pin} establecido en ALTO (HIGH) como señal de arranque correcto para la fuente.")
+            # Leer el estado real del pin tras ponerlo en HIGH
+            estado = GPIO.input(self.pin)
+            log.info(f"RebootMonitor: Estado real del pin {self.pin} tras ponerlo en HIGH: {'HIGH (1)' if estado == GPIO.HIGH else 'LOW (0)'}")
         except Exception as e:
             log.critical(f"RebootMonitor: No se pudo establecer el pin {self.pin} en ALTO: {e}")
-            
         # El trabajo de este hilo ha terminado. El pin se mantendrá en ALTO.
         log.info("RebootMonitor ha completado su tarea y el hilo finalizará.")
 
