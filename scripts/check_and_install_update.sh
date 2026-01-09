@@ -39,6 +39,7 @@ if [[ $GIT_OUTPUT == *"Your branch is behind"* ]]; then
         systemctl start $APP_SERVICE
         exit 1
     fi
+    systemctl start $APP_SERVICE
 
     log "Limpiando archivos no rastreados..."
     sudo -u cosigein git clean -fdx

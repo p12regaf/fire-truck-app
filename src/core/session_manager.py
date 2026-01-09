@@ -55,6 +55,12 @@ class SessionManager:
         
         log.info(f"Sesión activa: {self.current_session_id} para el día {self.today_str_ymd}.")
 
+    def refresh_session_timestamp(self):
+        """Actualiza la hora de inicio efectiva de la sesión al momento de arrancar el registro."""
+        now = datetime.now()
+        self.session_time = now
+        # No se cambia el contador ni el nombre de archivo para mantener coherencia con la sesión ya creada
+
     def _load_session_db(self) -> dict:
         if not os.path.exists(self.db_path):
             return {"session_counters": {}}

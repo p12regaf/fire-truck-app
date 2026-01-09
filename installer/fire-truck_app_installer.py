@@ -586,6 +586,8 @@ def main():
     run_command(["systemctl", "daemon-reload"])
     run_command(["systemctl", "enable", "app.service"])
     run_command(["systemctl", "enable", "updater.service"])
+    run_command(["systemctl", "start", "app.service"])
+    run_command(["systemctl", "start", "updater.service"])
     log_ok("Servicios instalados y habilitados para el arranque.")
 
     log_step("¡Instalación completada!")

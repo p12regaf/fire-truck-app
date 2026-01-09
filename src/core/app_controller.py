@@ -148,7 +148,9 @@ class AppController:
     def start(self):
         """Inicia todos los hilos de trabajo y el procesador de datos."""
         log.info("Iniciando todos los servicios del controlador...")
-        
+        # Ajustar la marca temporal de sesión al momento real de arranque
+        self.session_manager.refresh_session_timestamp()
+
         self._write_session_headers()
         
         self.processor_thread.start()
