@@ -131,21 +131,21 @@ def main():
         deployer.connect()
 
         # PASO 1
-        print_step("Actualizando sistema")
-        env = "DEBIAN_FRONTEND=noninteractive"
+        #print_step("Actualizando sistema")
+        #env = "DEBIAN_FRONTEND=noninteractive"
         #deployer.execute(f"{env} apt-get update", use_sudo=True)
         #deployer.execute(f"{env} apt-get upgrade -y", use_sudo=True)
-        deployer.execute(
+        """deployer.execute(
             f"{env} apt-get install -y git python3-pip python3-venv can-utils i2c-tools",
             use_sudo=True
-        )
+        )"""
 
         # PASO 2
         print_step("Creando directorios")
         deployer.execute(f"mkdir -p {APP_DIR} {LOG_DIR} {DATA_DIR}")
 
-        # PASO 3
-        print_step("Configurando Deploy Key")
+        # PASO 3 CONFIGURAR DEPLOY KEY (YA NO SE HACE, ASUMIMOS QUE LA KEY VIENE CON LA PLACA)
+        """print_step("Configurando Deploy Key")
         ssh_dir = f"/home/{TARGET_USER}/.ssh"
         key_path = f"{ssh_dir}/id_ed25519"
         pub_key = f"{key_path}.pub"
@@ -165,8 +165,9 @@ def main():
         git_host = repo_url.split("@")[1].split(":")[0]
         deployer.execute(f"ssh-keyscan {git_host} >> {ssh_dir}/known_hosts", ignore_errors=True)
         deployer.execute(f"sort -u {ssh_dir}/known_hosts -o {ssh_dir}/known_hosts")
+        """
 
-        # PASO 4
+        # PASO 4 ACTUALIZAR O CLONAR REPO
         print_step("Repositorio")
         repo_exists = deployer.execute(f"[ -d {APP_DIR}/.git ] && echo yes || echo no")
         if repo_exists == "yes":
@@ -182,6 +183,7 @@ def main():
 
         # PASO 5
         print_step("Permisos")
+        # PERMISO DE EJECUCION AL SCRIPT DE ACTUALIZACION
         update_script = f"{APP_DIR}/scripts/check_and_install_update.sh"
         try:
             deployer.sftp.stat(update_script)

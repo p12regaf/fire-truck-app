@@ -1,1 +1,0 @@
-Aqui tiene que estar la clave privada SSH para el despliegue automático. Se debe renombrar con el nombre "deploy_key" y estar en la misma carpeta ./installer junto a "fire-truck_app_installer.py"
