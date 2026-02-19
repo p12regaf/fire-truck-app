@@ -1,7 +1,6 @@
 [Unit]
 Description=Comprueba e instala actualizaciones para fire-truck-app
-After=network-online.target
-Wants=network-online.target
+After=basic.target
 # Asegúrate de que tu app principal no arranque hasta que el updater termine
 
 

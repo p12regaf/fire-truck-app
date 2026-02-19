@@ -2,8 +2,7 @@
 Description=Servicio de Monitorización de Vehículos (fire-truck-app)
 # Ya no necesitamos After=updater.service estrictamente si el updater lo lanza, 
 # pero dejarlo no hace daño. Lo importante es quitar el WantedBy si lo deshabilitas en el instalador.
-After=network-online.target
-Wants=network-online.target
+After=basic.target
 
 [Service]
 User=cosigein

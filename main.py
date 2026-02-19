@@ -1,16 +1,26 @@
+# -*- coding: utf-8 -*-
+
+"""
+=============================================================================
+ ENTRY POINT — fire-truck-app
+=============================================================================
+ Arranque principal de la aplicación en modo servicio (headless) o GUI.
+ Preparado para systemd, con apagado limpio y dependencias explícitas.
+=============================================================================
+"""
+
 import argparse
 import logging
 import signal
 import sys
 import time
-from queue import Queue
+from typing import Optional
 
 from src.core.app_controller import AppController
 from src.utils.config_loader import ConfigLoader
 from src.utils.unified_logger import setup_logging
 
-# Para la GUI, solo se importa si es necesario para evitar dependencias
-# innecesarias en el modo de servicio.
+# Importación diferida de la GUI
 try:
     from src.gui.main_window import MainWindow
     GUI_AVAILABLE = True
@@ -18,88 +28,143 @@ except ImportError:
     GUI_AVAILABLE = False
 
 
-def main():
-    """Punto de entrada principal de la aplicación fire-truck-app."""
-    parser = argparse.ArgumentParser(description="Sistema de Monitorización de Vehículos (fire-truck-app)")
-    parser.add_argument("--config", default="config/config.yaml", help="Ruta al archivo de configuración.")
-    parser.add_argument("--gui", action="store_true", help="Lanzar la aplicación con la interfaz gráfica.")
+def main() -> None:
+    """Punto de entrada principal de fire-truck-app."""
+
+    # ---------------------------------------------------------------------
+    # Argumentos CLI
+    # ---------------------------------------------------------------------
+    parser = argparse.ArgumentParser(
+        description="Sistema de Monitorización de Vehículos (fire-truck-app)"
+    )
+    parser.add_argument(
+        "--config",
+        default="config/config.yaml",
+        help="Ruta al archivo de configuración."
+    )
+    parser.add_argument(
+        "--gui",
+        action="store_true",
+        help="Lanzar la aplicación con interfaz gráfica."
+    )
     args = parser.parse_args()
 
-    # 1. Cargar configuración
+    # ---------------------------------------------------------------------
+    # Carga de configuración
+    # ---------------------------------------------------------------------
     try:
         config_loader = ConfigLoader(args.config)
         config = config_loader.get_config()
     except FileNotFoundError:
-        print(f"Error: El archivo de configuración '{args.config}' no fue encontrado.", file=sys.stderr)
+        print(
+            f"Error: El archivo de configuración '{args.config}' no fue encontrado.",
+            file=sys.stderr
+        )
         sys.exit(1)
-    except Exception as e:
-        print(f"Error al cargar la configuración: {e}", file=sys.stderr)
+    except Exception as exc:
+        print(f"Error al cargar la configuración: {exc}", file=sys.stderr)
         sys.exit(1)
 
-    # 2. Configurar logging centralizado
+    # ---------------------------------------------------------------------
+    # Logging centralizado
+    # ---------------------------------------------------------------------
     setup_logging(config)
     log = logging.getLogger(__name__)
-    log.info("Iniciando aplicación fire-truck-app...")
+    log.info("Iniciando fire-truck-app")
 
-    # 3. Crear el controlador principal de la aplicación
+    # ---------------------------------------------------------------------
+    # Controlador principal
+    # ---------------------------------------------------------------------
     app_controller = AppController(config)
 
-    # 4. Configurar manejo de señales para un apagado ordenado
-    def signal_handler(sig, frame):
-        log.warning(f"Señal {signal.Signals(sig).name} recibida. Iniciando apagado...")
-        app_controller.shutdown()
-        # Si se ejecuta la GUI, también se debe cerrar.
-        if 'main_window' in locals() and main_window.is_running():
-            main_window.close()
+    # Referencia explícita a la GUI (evita hacks con locals)
+    main_window: Optional[MainWindow] = None
 
-    signal.signal(signal.SIGINT, signal_handler)  # Ctrl+C
-    signal.signal(signal.SIGTERM, signal_handler) # systemctl stop
+    # ---------------------------------------------------------------------
+    # Manejo de señales
+    # ---------------------------------------------------------------------
+    def signal_handler(sig, _frame) -> None:
+        sig_name = signal.Signals(sig).name
+        log.warning("Señal %s recibida. Iniciando apagado ordenado.", sig_name)
 
-
-    # TODO: Esperar un tiempo para asegurar que los servicios del sistema estén listos
-    time.sleep(60)
-
-    # 5. Iniciar los servicios del backend
-    app_controller.start()
-
-    # 6. Decidir si arrancar en modo GUI o headless
-    use_gui = args.gui or config.get('system', {}).get('start_with_gui', False)
-
-    if use_gui:
-        if not GUI_AVAILABLE:
-            log.error("Se solicitó la GUI, pero los componentes (ej. tkinter) no están disponibles. Saliendo.")
-            app_controller.shutdown()
-            sys.exit(1)
-        
-        log.info("Iniciando en modo GUI...")
-        main_window = MainWindow(app_controller)
-        main_window.run() # Esto bloquea hasta que la ventana se cierra
-        log.info("La ventana de la GUI se ha cerrado.")
-        # Asegurarse de que el backend se apaga si la GUI se cierra primero
         if not app_controller.is_shutting_down():
             app_controller.shutdown()
-            
-    else:
-        log.info("Iniciando en modo headless (servicio).")
-        # Mantener el hilo principal vivo para que los hilos de trabajo puedan operar.
-        # El bucle se romperá cuando el evento de apagado se active.
-        while not app_controller.is_shutting_down():
-            try:
-                time.sleep(1)
-            except KeyboardInterrupt:
-                # Esto es redundante si signal_handler funciona, pero es una buena práctica
-                break
 
-    log.info("La aplicación fire-truck-app se ha detenido limpiamente.")
-    # Limpieza final de GPIO si se usó
+        if main_window is not None and main_window.is_running():
+            main_window.close()
+
+    signal.signal(signal.SIGINT, signal_handler)   # Ctrl+C
+    signal.signal(signal.SIGTERM, signal_handler)  # systemctl stop
+
+    # ---------------------------------------------------------------------
+    # Arranque backend
+    # ---------------------------------------------------------------------
+    try:
+        app_controller.start()
+    except Exception as exc:
+        log.exception("Error crítico durante el arranque del backend: %s", exc)
+        app_controller.shutdown()
+        sys.exit(1)
+
+    # ---------------------------------------------------------------------
+    # Decidir modo de ejecución
+    # ---------------------------------------------------------------------
+    use_gui = bool(
+        args.gui or
+        config.get("system", {}).get("start_with_gui", False)
+    )
+
+    # ---------------------------------------------------------------------
+    # Modo GUI
+    # ---------------------------------------------------------------------
+    if use_gui:
+        if not GUI_AVAILABLE:
+            log.error(
+                "Se solicitó la GUI pero no están disponibles las dependencias gráficas."
+            )
+            app_controller.shutdown()
+            sys.exit(1)
+
+        log.info("Arrancando en modo GUI")
+        main_window = MainWindow(app_controller)
+
+        try:
+            main_window.run()  # Bloquea hasta cierre
+        except Exception as exc:
+            log.exception("Error en la GUI: %s", exc)
+        finally:
+            if not app_controller.is_shutting_down():
+                app_controller.shutdown()
+
+    # ---------------------------------------------------------------------
+    # Modo headless (servicio systemd)
+    # ---------------------------------------------------------------------
+    else:
+        log.info("Arrancando en modo headless (servicio)")
+        try:
+            while not app_controller.is_shutting_down():
+                time.sleep(1)
+        except KeyboardInterrupt:
+            log.info("KeyboardInterrupt recibido")
+        finally:
+            if not app_controller.is_shutting_down():
+                app_controller.shutdown()
+
+    # ---------------------------------------------------------------------
+    # Limpieza final
+    # ---------------------------------------------------------------------
+    log.info("fire-truck-app detenido limpiamente")
+
+    # Limpieza defensiva de GPIO (si aplica)
     try:
         import RPi.GPIO as GPIO
         GPIO.cleanup()
-        log.info("Limpieza de GPIO completada.")
-    except (RuntimeError, ImportError):
-        # No hacer nada si RPi.GPIO no está disponible o ya fue limpiado
+        log.info("GPIO cleanup completado")
+    except (ImportError, RuntimeError):
         pass
+
     sys.exit(0)
+
 
 if __name__ == "__main__":
     main()
