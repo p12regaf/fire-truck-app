@@ -13,9 +13,9 @@ log "--- Iniciando script de comprobación e instalación ---"
 
 cd $APP_DIR || { log "ERROR: No se pudo acceder a $APP_DIR"; exit 1; }
 
-# Intentar actualizar repositorio. Si falla (sin internet), continuamos para arrancar la app de todos modos.
-log "Actualizando el repositorio remoto..."
-git remote update &> /dev/null
+# Intentar actualizar repositorio con un timeout para no bloquear el arranque.
+log "Actualizando el repositorio remoto (timeout 5s)..."
+timeout 5 git remote update &> /dev/null
 
 log "Comprobando el estado del repositorio local..."
 GIT_STATUS=$(LANG= C git status -uno)
