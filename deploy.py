@@ -37,7 +37,7 @@ def main():
     run([
         "ssh",
         target,
-        f"sudo python3 {REMOTE_SCRIPT}"
+        f"python3 {REMOTE_SCRIPT}"
     ])
 
     print("✔ Script enviado y ejecutado correctamente")
