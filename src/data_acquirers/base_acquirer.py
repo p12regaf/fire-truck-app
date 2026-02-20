@@ -20,6 +20,8 @@ class BaseAcquirer(threading.Thread, abc.ABC):
         self.system_config = config
         self.data_queue = data_queue
         self.shutdown_event = shutdown_event
+        self.data_seen = False
+        self.fatal_error = False
         log.info(f"Inicializando {self.name}...")
 
     def run(self):

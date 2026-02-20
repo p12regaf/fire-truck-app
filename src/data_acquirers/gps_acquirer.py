@@ -361,12 +361,14 @@ class GPSAcquirer(BaseAcquirer):
                     parsed_data = self._parse_gngga(line_str)
                     
                     if parsed_data:
-                        packet = self._create_data_packet("gps", parsed_data)
-                        self.data_queue.put(packet)
                         if parsed_data.get("status") == "Valid":
+                            self.data_seen = True
                             log.debug(f"Paquete GPS (NMEA) válido procesado: {parsed_data}")
                         else:
                             log.debug(f"Paquete GPS (NMEA) sin fix procesado: {parsed_data}")
+                        
+                        packet = self._create_data_packet("gps", parsed_data)
+                        self.data_queue.put(packet)
         
         self.shutdown_event.wait(0.05)
 
