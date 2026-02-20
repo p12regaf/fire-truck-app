@@ -102,6 +102,7 @@ def venv_step():
     run(["python3", "-m", "venv", ".venv"], cwd=APP_DIR)
     run([str(APP_DIR / ".venv/bin/pip"), "install", "-r", "requirements.txt"], cwd=APP_DIR)
 
+
 def install_services():
     for service_name in SERVICES:
         src = APP_DIR / "services" / service_name
@@ -111,13 +112,14 @@ def install_services():
             continue
         print(f">>> Instalando/actualizando {service_name}")
         run(["sudo", "cp", str(src), str(dest)])
+    
     print(">>> Recargando systemd...")
     run(["sudo", "systemctl", "daemon-reload"])
+    
     for service_name in SERVICES:
-        print(f">>> Habilitando y arrancando {service_name}")
+        print(f">>> Habilitando {service_name} para iniciar al arranque")
         run(["sudo", "systemctl", "enable", service_name])
-        run(["sudo", "systemctl", "restart", service_name])
-        run(["systemctl", "status", service_name], ignore_errors=True)
+        # Ya no se hace restart ni status
 
 def main():
     ensure_dirs()
