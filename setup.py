@@ -153,21 +153,25 @@ def repo_step():
     if is_unstable or is_pending_failed:
         reason = state.get("instability_reason", "Desconocido")
         print(f">>> [ROLLBACK] Reversión necesaria. Motivo: {reason}")
-        print(f">>> [ROLLBACK] Versión actual: {current_commit[:8] if current_commit else 'N/A'}")
         
         rollback_success = False
-        if state.get("last_stable_commit"):
-            print(f">>> [ROLLBACK] Intentando revertir via Git a {state['last_stable_commit'][:8]}...")
+        
+        # 1. Intentar siempre la restauración local primero (más seguro y predecible)
+        print(">>> [ROLLBACK] Restaurando desde snapshot local...")
+        rollback_success = restore_local_snapshot()
+
+        # 2. Solo si falla el snapshot local, intentamos Git como último recurso
+        if not rollback_success and state.get("last_stable_commit"):
+            print(f">>> [ROLLBACK] Snapshot falló. Intentando revertir via Git a {state['last_stable_commit'][:8]}...")
             if run(["git", "reset", "--hard", state["last_stable_commit"]], cwd=APP_DIR, ignore_errors=True) == 0:
                 run(["git", "clean", "-fdx"], cwd=APP_DIR)
                 rollback_success = True
 
-        if not rollback_success:
-            print(">>> [ROLLBACK] Git falló o no hay commit estable. Intentando restauración desde snapshot local...")
-            rollback_success = restore_local_snapshot()
-
         if rollback_success:
             state["pending_commit"] = None
+            # IMPORTANTE: Después de un rollback exitoso, marcamos como estable el estado inicial 
+            # para evitar bucles si el snapshot restaurado es antiguo pero funcional.
+            state["is_stable"] = True 
             save_update_state(state)
             print(">>> [ROLLBACK] Éxito. Saltando actualización para este arranque.")
             return
