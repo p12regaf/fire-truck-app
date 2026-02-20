@@ -16,6 +16,8 @@ from src.transmitters.ftp_transmitter import FTPTransmitter
 from .power_monitor import PowerMonitor
 from .alarm_monitor import AlarmMonitor
 from .reboot_monitor import RebootMonitor
+from .connectivity_monitor import ConnectivityMonitor
+from src.utils.update_manager import UpdateManager
 
 log = logging.getLogger(__name__)
 
@@ -29,8 +31,10 @@ class AppController:
         self.latest_data = {}
         self.data_lock = threading.Lock()
         self.log_line_counters = {} # Contador de líneas para los logs
+        self.self_test_passed = False
         
         self.session_manager = SessionManager(config)
+        self.update_manager = UpdateManager(config)
 
         self.ftp_transmitter = None
 
@@ -79,6 +83,10 @@ class AppController:
         if self.config.get('system', {}).get('reboot_monitor', {}).get('enabled', False):
             log.info("Reboot Monitor está habilitado. Inicializando...")
             self.workers.append(RebootMonitor(self.config, self))
+
+        # El ConnectivityMonitor siempre debe estar activo si queremos el log de red
+        log.info("Inicializando Connectivity Monitor...")
+        self.workers.append(ConnectivityMonitor(self.config, self))
             
         log.info(f"{len(self.workers)} trabajadores inicializados.")
         log.info(f"Tipos de datos activos: {self.active_data_types}")
@@ -152,12 +160,39 @@ class AppController:
         """Inicia todos los hilos de trabajo y el procesador de datos."""
         log.info("Iniciando todos los servicios del controlador...")
         
+        # 1. Realizar Self-Test antes de arrancar todo
+        if not self._perform_self_test():
+            log.critical("¡FALLO EN EL SELF-TEST! El sistema podría no ser estable.")
+            # Dependiendo de la severidad, podríamos continuar o abortar.
+            # Aquí continuamos pero con la flag en False, para que RebootMonitor lo sepa.
+        else:
+            log.info("Self-Test completado con ÉXITO.")
+            self.self_test_passed = True
+
         self._write_session_headers()
         
         self.processor_thread.start()
         for worker in self.workers:
             worker.start()
         log.info("Todos los servicios del controlador han sido iniciados.")
+
+    def _perform_self_test(self) -> bool:
+        """
+        Realiza comprobaciones críticas de arranque.
+        """
+        log.info("Ejecutando secuencia de Self-Test...")
+        try:
+            # 1. Verificar directorios de datos
+            self.session_manager.ensure_data_directories(self.active_data_types)
+            
+            # 2. Verificar que los trabajadores críticos están instanciados
+            # (ej. si el RebootMonitor es obligatorio y no está, fallar)
+            # Por ahora, consideramos éxito si no hay excepciones críticas en el setup previo.
+            
+            return True
+        except Exception as e:
+            log.error(f"Error durante el Self-Test: {e}")
+            return False
         
     def shutdown(self):
         """Detiene de forma ordenada todos los hilos."""
@@ -166,6 +201,9 @@ class AppController:
             
         log.info("Iniciando secuencia de apagado...")
         self.shutdown_event.set()
+
+        # Evaluar la salud de la sesión antes de cerrar todo
+        self._evaluate_session_health()
 
         if self.ftp_transmitter:
             log.info("Iniciando subida final de logs de sistema...")
@@ -318,3 +356,47 @@ class AppController:
             status[worker.name] = "Running" if worker.is_alive() else "Stopped"
         status[self.processor_thread.name] = "Running" if self.processor_thread.is_alive() else "Stopped"
         return status
+
+    def _evaluate_session_health(self):
+        """
+        Evalúa si la sesión actual ha sido exitosa (dispositivos ok, red ok).
+        Si falla, informa al UpdateManager para forzar un rollback.
+        """
+        log.info("Evaluando salud de la sesión actual...")
+        errors = []
+
+        # 1. ¿Pasó el self-test inicial?
+        if not self.self_test_passed:
+            errors.append("Fallo en Self-Test inicial")
+
+        # 2. ¿Hubo conectividad en algún momento?
+        connectivity_worker = next((w for w in self.workers if hasattr(w, 'connectivity_seen') and w.connectivity_seen), None)
+        if not connectivity_worker:
+            errors.append("Sin conectividad a Internet")
+
+        # 3. ¿Los dispositivos críticos reportaron datos válidos?
+        for worker in self.workers:
+            if hasattr(worker, 'data_seen') and not worker.data_seen:
+                # Solo consideramos fallos si el nombre contiene "Acquirer" (CAN, GPS, etc.)
+                if "Acquirer" in worker.name:
+                    errors.append(f"El dispositivo {worker.name} no reportó datos válidos")
+            if hasattr(worker, 'fatal_error') and worker.fatal_error:
+                errors.append(f"Error fatal en dispositivo {worker.name}")
+
+        # 4. Verificar integridad básica de logs
+        for data_type in self.active_data_types:
+            try:
+                log_path = self.session_manager.get_log_path(data_type)
+                if not os.path.exists(log_path) or os.path.getsize(log_path) == 0:
+                    errors.append(f"Archivo de log vacío o inexistente para {data_type}")
+            except Exception:
+                errors.append(f"Error accediendo a log de {data_type}")
+
+        if errors:
+            reason = "; ".join(errors)
+            log.error(f"Sesión evaluada como NO SALUDABLE: {reason}")
+            self.update_manager.mark_as_unstable(reason)
+        else:
+            log.info("Sesión evaluada como SALUDABLE.")
+            # Si todo fue bien, nos aseguramos de que esté marcado como estable
+            self.update_manager.mark_as_stable()
