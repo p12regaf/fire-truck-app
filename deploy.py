@@ -26,6 +26,11 @@ def main():
 
     target = f"{REMOTE_USER}@{host}"
 
+    # Crear el directorio remoto antes de subir archivos
+    run([
+        "ssh", target, f"mkdir -p {REMOTE_APP_DIR}"
+    ])
+
     # 1. Copiar script
     run([
         "scp",
