@@ -11,15 +11,12 @@ APP_DIR = Path(f"/home/{TARGET_USER}/fire-truck-app")
 LOG_DIR = Path(f"/home/{TARGET_USER}/logs")
 DATA_DIR = Path(f"/home/{TARGET_USER}/datos")
 SSH_KEY = Path(f"/home/{TARGET_USER}/.ssh/id_ed25519")
-SERVICES = ["update.service", "app.service"]
-
-
+SERVICES = ["updater.service", "app.service"]
 
 REPO_URL = "git@github.com:p12regaf/fire-truck-app.git"
 GIT_BRANCH = "main"
 
 def run(cmd, sudo=False, cwd=None, ignore_errors=False):
-    """Ejecuta un comando en la placa, con sudo opcional."""
     if sudo:
         cmd = ["sudo"] + cmd
 
@@ -41,32 +38,22 @@ def run(cmd, sudo=False, cwd=None, ignore_errors=False):
         sys.exit(result.returncode)
 
 def ensure_dirs():
-    """Crea directorios necesarios."""
     run(["mkdir", "-p", str(APP_DIR), str(LOG_DIR), str(DATA_DIR)], sudo=True)
 
 def fix_dns():
-    """Configura DNS permanente para evitar errores de Git."""
     print(">>> Configurando DNS permanente...")
     resolved_conf = """[Resolve]
 DNS=1.1.1.1 8.8.8.8
 FallbackDNS=9.9.9.9
 """
-    subprocess.run(
-        ["sudo", "tee", "/etc/systemd/resolved.conf"],
-        input=resolved_conf.encode(),
-        check=True
-    )
+    subprocess.run(["sudo", "tee", "/etc/systemd/resolved.conf"], input=resolved_conf.encode(), check=True)
     subprocess.run(["sudo", "systemctl", "restart", "systemd-resolved"], check=True)
     print(">>> DNS configurado correctamente")
 
 def wait_for_network():
-    """Espera a que haya resolución DNS."""
     print(">>> Esperando red (DNS)...")
     for _ in range(10):
-        result = subprocess.run(
-            ["getent", "hosts", "github.com"],
-            stdout=subprocess.DEVNULL
-        )
+        result = subprocess.run(["getent", "hosts", "github.com"], stdout=subprocess.DEVNULL)
         if result.returncode == 0:
             print(">>> Red OK")
             return
@@ -75,7 +62,6 @@ def wait_for_network():
     sys.exit(1)
 
 def ensure_ssh_key_permissions():
-    """Asegura que las claves SSH tengan permisos correctos."""
     if SSH_KEY.exists():
         print(f">>> Asegurando permisos correctos de {SSH_KEY}")
         run(["chmod", "600", str(SSH_KEY)])
@@ -83,22 +69,29 @@ def ensure_ssh_key_permissions():
         print(f"⚠ La clave SSH {SSH_KEY} no existe, Git fallará si es necesaria")
 
 def repo_step():
-    """Clona o actualiza el repositorio."""
     parent = APP_DIR.parent
-
-    # Permisos correctos antes de usar Git
     ensure_ssh_key_permissions()
+
+    # Verifica si .git/index existe y si parece corrupto
+    git_index = APP_DIR / ".git" / "index"
+    if git_index.exists():
+        try:
+            subprocess.run(["git", "status"], cwd=APP_DIR, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except subprocess.CalledProcessError:
+            print(">>> Índice de Git corrupto, eliminando carpeta completa del repo")
+            run(["rm", "-rf", str(APP_DIR)], sudo=True)
+
+    # Asegurarse de que el directorio APP_DIR exista
+    APP_DIR.mkdir(parents=True, exist_ok=True)
 
     if not (APP_DIR / ".git").exists():
         if any(APP_DIR.iterdir()):
             print(">>> Directorio no vacío pero sin .git, limpiando")
             run(["rm", "-rf", str(APP_DIR)], sudo=True)
+            APP_DIR.mkdir(parents=True, exist_ok=True)
 
         print(f">>> Clonando repo {REPO_URL} en {APP_DIR}")
-        run(
-            ["git", "clone", "-b", GIT_BRANCH, REPO_URL, str(APP_DIR)],
-            cwd=parent
-        )
+        run(["git", "clone", "-b", GIT_BRANCH, REPO_URL, str(APP_DIR)], cwd=parent)
     else:
         print(">>> Actualizando repositorio")
         run(["git", "fetch", "--all", "--prune"], cwd=APP_DIR)
@@ -106,7 +99,6 @@ def repo_step():
         run(["git", "clean", "-fdx"], cwd=APP_DIR)
 
 def venv_step():
-    """Crea virtualenv e instala dependencias."""
     run(["python3", "-m", "venv", ".venv"], cwd=APP_DIR)
     run([str(APP_DIR / ".venv/bin/pip"), "install", "-r", "requirements.txt"], cwd=APP_DIR)
 
@@ -117,13 +109,8 @@ def install_services():
         if not src.exists():
             print(f"⚠ No se encontró {src}, no se instalará el servicio")
             continue
-        if not dest.exists():
-            print(f">>> Instalando {service_name}")
-            run(["sudo", "cp", str(src), str(dest)])
-        else:
-            print(f">>> {service_name} ya existe, actualizando...")
-            run(["sudo", "cp", str(src), str(dest)])
-    # Recarga y habilita
+        print(f">>> Instalando/actualizando {service_name}")
+        run(["sudo", "cp", str(src), str(dest)])
     print(">>> Recargando systemd...")
     run(["sudo", "systemctl", "daemon-reload"])
     for service_name in SERVICES:
@@ -138,7 +125,6 @@ def main():
     wait_for_network()
     repo_step()
     install_services()
-
     venv_step()
     print("\n✔ Setup completado correctamente")
 
