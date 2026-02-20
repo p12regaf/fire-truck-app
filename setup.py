@@ -1,29 +1,25 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-"""
-=============================================================================
- SCRIPT DE DESPLIEGUE LOCAL PARA fire-truck-app
-=============================================================================
-"""
-
 import subprocess
 import sys
 from pathlib import Path
-import os
+import time
 
-
-# --- Configuración ---
 TARGET_USER = "cosigein"
-BASE_DIR = Path(__file__).resolve().parent
 APP_DIR = Path(f"/home/{TARGET_USER}/fire-truck-app")
 LOG_DIR = Path(f"/home/{TARGET_USER}/logs")
 DATA_DIR = Path(f"/home/{TARGET_USER}/datos")
-SERVICES_DIR = BASE_DIR / "services"
-# ---------------------
+SSH_KEY = Path(f"/home/{TARGET_USER}/.ssh/id_ed25519")
+SERVICES = ["update.service", "app.service"]
 
-# --- Utilidades ---
+
+
+REPO_URL = "git@github.com:p12regaf/fire-truck-app.git"
+GIT_BRANCH = "main"
+
 def run(cmd, sudo=False, cwd=None, ignore_errors=False):
+    """Ejecuta un comando en la placa, con sudo opcional."""
     if sudo:
         cmd = ["sudo"] + cmd
 
@@ -38,96 +34,113 @@ def run(cmd, sudo=False, cwd=None, ignore_errors=False):
 
     if result.stdout:
         print(result.stdout.strip())
-
     if result.stderr:
         print(result.stderr.strip(), file=sys.stderr)
 
     if result.returncode != 0 and not ignore_errors:
         sys.exit(result.returncode)
 
-def require_root():
-    if os.geteuid() != 0:
-        print("Este script debe ejecutarse con sudo")
-        sys.exit(1)
-
-# --- Pasos ---
-def create_dirs():
+def ensure_dirs():
+    """Crea directorios necesarios."""
     run(["mkdir", "-p", str(APP_DIR), str(LOG_DIR), str(DATA_DIR)], sudo=True)
 
-def update_repo():
+def fix_dns():
+    """Configura DNS permanente para evitar errores de Git."""
+    print(">>> Configurando DNS permanente...")
+    resolved_conf = """[Resolve]
+DNS=1.1.1.1 8.8.8.8
+FallbackDNS=9.9.9.9
+"""
+    subprocess.run(
+        ["sudo", "tee", "/etc/systemd/resolved.conf"],
+        input=resolved_conf.encode(),
+        check=True
+    )
+    subprocess.run(["sudo", "systemctl", "restart", "systemd-resolved"], check=True)
+    print(">>> DNS configurado correctamente")
+
+def wait_for_network():
+    """Espera a que haya resolución DNS."""
+    print(">>> Esperando red (DNS)...")
+    for _ in range(10):
+        result = subprocess.run(
+            ["getent", "hosts", "github.com"],
+            stdout=subprocess.DEVNULL
+        )
+        if result.returncode == 0:
+            print(">>> Red OK")
+            return
+        time.sleep(3)
+    print("ERROR: sin DNS / Internet")
+    sys.exit(1)
+
+def ensure_ssh_key_permissions():
+    """Asegura que las claves SSH tengan permisos correctos."""
+    if SSH_KEY.exists():
+        print(f">>> Asegurando permisos correctos de {SSH_KEY}")
+        run(["chmod", "600", str(SSH_KEY)])
+    else:
+        print(f"⚠ La clave SSH {SSH_KEY} no existe, Git fallará si es necesaria")
+
+def repo_step():
+    """Clona o actualiza el repositorio."""
+    parent = APP_DIR.parent
+
+    # Permisos correctos antes de usar Git
+    ensure_ssh_key_permissions()
+
     if not (APP_DIR / ".git").exists():
-        print("Error: el repositorio debe existir localmente")
-        sys.exit(1)
+        if any(APP_DIR.iterdir()):
+            print(">>> Directorio no vacío pero sin .git, limpiando")
+            run(["rm", "-rf", str(APP_DIR)], sudo=True)
 
-    run(["git", "fetch", "--all", "--prune"], cwd=APP_DIR)
-    run(["git", "reset", "--hard", "origin/main"], cwd=APP_DIR)
-    run(["git", "clean", "-fdx"], cwd=APP_DIR)
+        print(f">>> Clonando repo {REPO_URL} en {APP_DIR}")
+        run(
+            ["git", "clone", "-b", GIT_BRANCH, REPO_URL, str(APP_DIR)],
+            cwd=parent
+        )
+    else:
+        print(">>> Actualizando repositorio")
+        run(["git", "fetch", "--all", "--prune"], cwd=APP_DIR)
+        run(["git", "reset", "--hard", f"origin/{GIT_BRANCH}"], cwd=APP_DIR)
+        run(["git", "clean", "-fdx"], cwd=APP_DIR)
 
-def setup_venv():
+def venv_step():
+    """Crea virtualenv e instala dependencias."""
     run(["python3", "-m", "venv", ".venv"], cwd=APP_DIR)
     run([str(APP_DIR / ".venv/bin/pip"), "install", "-r", "requirements.txt"], cwd=APP_DIR)
 
-def permissions():
-    update_script = APP_DIR / "scripts/check_and_install_update.sh"
-    if update_script.exists():
-        run(["chmod", "+x", str(update_script)], sudo=True)
-
-    run(
-        ["usermod", "-a", "-G", "gpio,i2c,dialout", TARGET_USER],
-        sudo=True,
-        ignore_errors=True
-    )
-
-def sudoers():
-    rule = f"{TARGET_USER} ALL=(ALL) NOPASSWD: /sbin/shutdown, /sbin/reboot"
-    run(
-        ["sh", "-c", f"echo '{rule}' > /etc/sudoers.d/99-fire-truck-app"],
-        sudo=True
-    )
-    run(["chmod", "0440", "/etc/sudoers.d/99-fire-truck-app"], sudo=True)
-
-def can_rtc():
-    config_file = Path("/boot/firmware/config.txt")
-    if not config_file.exists():
-        config_file = Path("/boot/config.txt")
-
-    can_cfg = (
-        "\n# fire-truck CAN\n"
-        "dtparam=spi=on\n"
-        "dtoverlay=mcp2515-can0,oscillator=16000000,interrupt=25\n"
-    )
-
-    run(
-        ["sh", "-c", f"grep -q mcp2515-can0 {config_file} || printf '{can_cfg}' >> {config_file}"],
-        sudo=True
-    )
-
-    run(["apt-get", "-y", "remove", "fake-hwclock"], sudo=True, ignore_errors=True)
-
-def systemd():
-    for svc in ("app.service", "updater.service"):
-        src = SERVICES_DIR / svc
+def install_services():
+    for service_name in SERVICES:
+        src = APP_DIR / "services" / service_name
+        dest = Path("/etc/systemd/system") / service_name
         if not src.exists():
-            print(f"Servicio no encontrado: {svc}")
+            print(f"⚠ No se encontró {src}, no se instalará el servicio")
             continue
+        if not dest.exists():
+            print(f">>> Instalando {service_name}")
+            run(["sudo", "cp", str(src), str(dest)])
+        else:
+            print(f">>> {service_name} ya existe, actualizando...")
+            run(["sudo", "cp", str(src), str(dest)])
+    # Recarga y habilita
+    print(">>> Recargando systemd...")
+    run(["sudo", "systemctl", "daemon-reload"])
+    for service_name in SERVICES:
+        print(f">>> Habilitando y arrancando {service_name}")
+        run(["sudo", "systemctl", "enable", service_name])
+        run(["sudo", "systemctl", "restart", service_name])
+        run(["systemctl", "status", service_name], ignore_errors=True)
 
-        run(["cp", str(src), f"/etc/systemd/system/{svc}"], sudo=True)
-
-    run(["systemctl", "daemon-reload"], sudo=True)
-    run(["systemctl", "enable", "app.service", "updater.service"], sudo=True)
-    run(["systemctl", "restart", "app.service", "updater.service"], sudo=True)
-
-# --- Main ---
 def main():
-    create_dirs()
-    update_repo()
-    setup_venv()
-    permissions()
-    sudoers()
-    can_rtc()
-    systemd()
+    ensure_dirs()
+    fix_dns()
+    wait_for_network()
+    repo_step()
+    install_services()
 
-    print("\n✔ Despliegue local completado")
+    venv_step()
+    print("\n✔ Setup completado correctamente")
 
 if __name__ == "__main__":
     main()
