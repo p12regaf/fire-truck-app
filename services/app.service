@@ -1,7 +1,7 @@
 [Unit]
 Description=fire-truck-app principal
-After=update.service
-Wants=update.service
+After=updater.service
+Wants=updater.service
 
 
 
