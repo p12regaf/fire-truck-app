@@ -97,6 +97,22 @@ def repo_step():
         run(["git", "fetch", "--all", "--prune"], cwd=APP_DIR)
         run(["git", "reset", "--hard", f"origin/{GIT_BRANCH}"], cwd=APP_DIR)
         run(["git", "clean", "-fdx"], cwd=APP_DIR)
+    # Asegurarse de que el directorio APP_DIR exista
+    APP_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Crear config.yaml si no existe
+    config_dir = APP_DIR / "config"
+    config_dir.mkdir(parents=True, exist_ok=True)  # asegurarse de que exista
+
+    config_file = config_dir / "config.yaml"
+    config_template = config_dir / "config.yaml.template"
+
+    if not config_file.exists():
+        if config_template.exists():
+            print(">>> config.yaml no existe, copiando config.yaml.template")
+            run(["cp", str(config_template), str(config_file)])
+        else:
+            print("⚠ No existe config.yaml ni config.yaml.template, se requiere configuración")
 
 def venv_step():
     run(["python3", "-m", "venv", ".venv"], cwd=APP_DIR)
