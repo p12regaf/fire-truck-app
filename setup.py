@@ -107,14 +107,20 @@ def fix_dns():
 
 def wait_for_network():
     print(">>> Esperando red (DNS)...")
-    for _ in range(10):
+    # Comprobar una vez inmediatamente
+    result = subprocess.run(["getent", "hosts", "github.com"], stdout=subprocess.DEVNULL)
+    if result.returncode == 0:
+        print(">>> Red OK")
+        return
+
+    for i in range(20): # 20 intentos de 1s = 20s total
+        time.sleep(1)
         result = subprocess.run(["getent", "hosts", "github.com"], stdout=subprocess.DEVNULL)
         if result.returncode == 0:
-            print(">>> Red OK")
+            print(f">>> Red OK (detectada en {i+1}s)")
             return
-        time.sleep(3)
-    print("ERROR: sin DNS / Internet")
-    sys.exit(1)
+    print("⚠ Advertencia: sin DNS / Internet estable. Continuando setup sin actualizaciones.")
+    # No salimos con error para permitir que la app intente arrancar con lo que tenga
 
 def ensure_ssh_key_permissions():
     if SSH_KEY.exists():
@@ -177,8 +183,26 @@ def repo_step():
             print("⚠ No existe config.yaml ni config.yaml.template, se requiere configuración")
 
 def venv_step():
-    run(["python3", "-m", "venv", ".venv"], cwd=APP_DIR)
-    run([str(APP_DIR / ".venv/bin/pip"), "install", "-r", "requirements.txt"], cwd=APP_DIR)
+    venv_dir = APP_DIR / ".venv"
+    req_file = APP_DIR / "requirements.txt"
+    hash_file = venv_dir / ".req_hash"
+    
+    if not venv_dir.exists():
+        run(["python3", "-m", "venv", ".venv"], cwd=APP_DIR)
+    
+    if req_file.exists():
+        import hashlib
+        current_hash = hashlib.md5(req_file.read_bytes()).hexdigest()
+        
+        if hash_file.exists() and hash_file.read_text().strip() == current_hash:
+            print(">>> Requisitos de Python ya instalados (hash coincide). Saltando pip install.")
+            return
+            
+        print(">>> Instalando/actualizando dependencias de Python...")
+        run([str(APP_DIR / ".venv/bin/pip"), "install", "-r", "requirements.txt"], cwd=APP_DIR)
+        hash_file.write_text(current_hash)
+    else:
+        print(">>> No se encontró requirements.txt. Saltando instalación de dependencias.")
 
 
 def install_services():

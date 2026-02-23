@@ -116,19 +116,16 @@ class CANAcquirer(BaseAcquirer):
     def _sampler_loop(self):
         log.info(f"Hilo de muestreo de CAN iniciado. Registrará datos cada {self.log_interval_sec} segundos.")
         while not self.shutdown_event.is_set():
-            self.shutdown_event.wait(self.log_interval_sec)
-            
-            if self.shutdown_event.is_set():
-                break
-
+            # Muestrear y registrar inmediatamente
             with self.data_lock:
-                if not self.latest_values:
-                    continue
-                data_to_log = self.latest_values.copy()
+                if self.latest_values:
+                    data_to_log = self.latest_values.copy()
+                    packet = self._create_data_packet("can", data_to_log)
+                    self.data_queue.put(packet)
+                    log.debug(f"Paquete de CAN muestreado enviado para registro: {data_to_log}")
             
-            packet = self._create_data_packet("can", data_to_log)
-            self.data_queue.put(packet)
-            log.debug(f"Paquete de CAN muestreado enviado para registro: {data_to_log}")
+            # Esperar el intervalo
+            self.shutdown_event.wait(self.log_interval_sec)
 
     def _setup(self) -> bool:
         if not self._initialize_can_interface():
