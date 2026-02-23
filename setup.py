@@ -40,15 +40,65 @@ def run(cmd, sudo=False, cwd=None, ignore_errors=False):
 def ensure_dirs():
     run(["mkdir", "-p", str(APP_DIR), str(LOG_DIR), str(DATA_DIR)], sudo=True)
 
+RESOLVED_CONF_PATH = Path("/etc/systemd/resolved.conf")
+FALLBACK_DNS_LINE = "FallbackDNS=1.1.1.1 8.8.8.8 9.9.9.9"
+
 def fix_dns():
-    print(">>> Configurando DNS permanente...")
-    resolved_conf = """[Resolve]
-DNS=1.1.1.1 8.8.8.8
-FallbackDNS=9.9.9.9
-"""
-    subprocess.run(["sudo", "tee", "/etc/systemd/resolved.conf"], input=resolved_conf.encode(), check=True)
-    subprocess.run(["sudo", "systemctl", "restart", "systemd-resolved"], check=True)
-    print(">>> DNS configurado correctamente")
+    print(">>> Comprobando resolución de DNS...")
+    # Verificar si ya funciona la resolución de nombres
+    result = subprocess.run(["getent", "hosts", "github.com"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if result.returncode == 0:
+        print(">>> El DNS ya funciona correctamente. Saltando configuración.")
+        return
+
+    print(">>> DNS no funciona. Configurando FallbackDNS de forma quirúrgica...")
+    try:
+        # Leer el archivo existente para no destruir otras configuraciones
+        existing_lines = []
+        has_resolve_section = False
+        fallback_already_set = False
+        modified = False
+
+        if RESOLVED_CONF_PATH.exists():
+            existing_lines = RESOLVED_CONF_PATH.read_text().splitlines()
+
+        new_lines = []
+        for line in existing_lines:
+            stripped = line.strip()
+            if stripped == "[Resolve]":
+                has_resolve_section = True
+            if stripped.startswith("FallbackDNS="):
+                if stripped == FALLBACK_DNS_LINE:
+                    fallback_already_set = True
+                    new_lines.append(line)
+                else:
+                    # Reemplazar la línea existente con la nuestra
+                    new_lines.append(FALLBACK_DNS_LINE)
+                    modified = True
+                continue
+            new_lines.append(line)
+
+        if fallback_already_set:
+            print(">>> FallbackDNS ya está configurado correctamente. Solo reiniciando resolved...")
+            subprocess.run(["sudo", "systemctl", "restart", "systemd-resolved"], check=True)
+            return
+
+        if not modified:
+            # No había línea FallbackDNS, hay que añadirla
+            if not has_resolve_section:
+                new_lines.append("[Resolve]")
+            new_lines.append(FALLBACK_DNS_LINE)
+
+        new_content = "\n".join(new_lines) + "\n"
+        # Escribir de forma segura usando tee (necesitamos sudo)
+        subprocess.run(["sudo", "tee", str(RESOLVED_CONF_PATH)],
+                       input=new_content.encode(), stdout=subprocess.DEVNULL, check=True)
+        subprocess.run(["sudo", "systemctl", "restart", "systemd-resolved"], check=True)
+        print(">>> FallbackDNS configurado correctamente (resto del archivo preservado)")
+    except subprocess.CalledProcessError as e:
+        print(f"⚠ No se pudo configurar el DNS: {e}")
+    except IOError as e:
+        print(f"⚠ No se pudo leer {RESOLVED_CONF_PATH}: {e}")
 
 def wait_for_network():
     print(">>> Esperando red (DNS)...")
@@ -78,8 +128,14 @@ def repo_step():
         try:
             subprocess.run(["git", "status"], cwd=APP_DIR, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except subprocess.CalledProcessError:
-            print(">>> Índice de Git corrupto, eliminando carpeta completa del repo")
-            run(["rm", "-rf", str(APP_DIR)], sudo=True)
+            print(">>> Índice de Git corrupto. Verificando conexión antes de borrar.")
+            # Solo borrar si hay internet para clonar de nuevo
+            net_check = subprocess.run(["getent", "hosts", "github.com"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            if net_check.returncode == 0:
+                print(">>> Internet OK, re-clonando repositorio.")
+                run(["rm", "-rf", str(APP_DIR)], sudo=True)
+            else:
+                print("⚠ Error: Índice corrupto y NO hay internet. Manteniendo archivos actuales como último recurso.")
 
     # Asegurarse de que el directorio APP_DIR exista
     APP_DIR.mkdir(parents=True, exist_ok=True)
@@ -96,7 +152,7 @@ def repo_step():
         print(">>> Actualizando repositorio")
         run(["git", "fetch", "--all", "--prune"], cwd=APP_DIR)
         run(["git", "reset", "--hard", f"origin/{GIT_BRANCH}"], cwd=APP_DIR)
-        run(["git", "clean", "-fdx"], cwd=APP_DIR)
+        run(["git", "clean", "-fd"], cwd=APP_DIR)
     # Asegurarse de que el directorio APP_DIR exista
     APP_DIR.mkdir(parents=True, exist_ok=True)
 
