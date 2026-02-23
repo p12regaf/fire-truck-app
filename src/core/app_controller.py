@@ -1,3 +1,4 @@
+import json
 import logging
 import threading
 from queue import Queue, Empty
@@ -17,6 +18,8 @@ from .power_monitor import PowerMonitor
 from .alarm_monitor import AlarmMonitor
 from .reboot_monitor import RebootMonitor
 
+from src.utils.network import check_internet_connection
+
 log = logging.getLogger(__name__)
 
 class AppController:
@@ -29,6 +32,13 @@ class AppController:
         self.latest_data = {}
         self.data_lock = threading.Lock()
         self.log_line_counters = {} # Contador de líneas para los logs
+        
+        # Tracking de conectividad para el sistema de rollback
+        self.had_internet = False
+        self.session_health_file = config.get('paths', {}).get(
+            'session_health_file',
+            os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'session_health.json')
+        )
         
         self.session_manager = SessionManager(config)
 
@@ -65,7 +75,7 @@ class AppController:
 
         if self.config.get('ftp', {}).get('enabled', False):
             log.info("FTP Transmitter está habilitado. Inicializando...")
-            self.ftp_transmitter = FTPTransmitter(self.config, self.shutdown_event, self.session_manager)
+            self.ftp_transmitter = FTPTransmitter(self.config, self.shutdown_event, self.session_manager, app_controller=self)
             self.workers.append(self.ftp_transmitter)
         
         if self.config.get('system', {}).get('power_monitor', {}).get('enabled', False):
@@ -148,10 +158,45 @@ class AppController:
         log.info("Escritura de cabeceras completada.")
 
 
+    def set_internet_detected(self):
+        """Marca que se ha detectado conexión a internet en esta sesión."""
+        if not self.had_internet:
+            self.had_internet = True
+            log.info("Conectividad a internet detectada para esta sesión.")
+
+    def _check_initial_connectivity(self):
+        """Comprobación de conectividad al arranque, independiente de FTP."""
+        log.info("Realizando comprobación inicial de conectividad...")
+        if check_internet_connection():
+            self.set_internet_detected()
+        else:
+            log.warning("No se detectó conexión a internet en la comprobación inicial.")
+
+    def _write_session_health(self):
+        """Escribe el estado de conectividad de la sesión para que setup.py lo lea en el próximo arranque."""
+        try:
+            version = "unknown"
+            version_file = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.version')
+            if os.path.exists(version_file):
+                with open(version_file, 'r') as f:
+                    version = f.read().strip()
+            
+            health_data = {
+                "had_internet": self.had_internet,
+                "version": version,
+                "timestamp": datetime.now().isoformat()
+            }
+            with open(self.session_health_file, 'w') as f:
+                json.dump(health_data, f, indent=2)
+            log.info(f"Estado de salud de sesión guardado: had_internet={self.had_internet}, version={version}")
+        except IOError as e:
+            log.error(f"No se pudo escribir session_health.json: {e}")
+
     def start(self):
         """Inicia todos los hilos de trabajo y el procesador de datos."""
         log.info("Iniciando todos los servicios del controlador...")
         
+        self._check_initial_connectivity()
         self._write_session_headers()
         
         self.processor_thread.start()
@@ -166,6 +211,9 @@ class AppController:
             
         log.info("Iniciando secuencia de apagado...")
         self.shutdown_event.set()
+
+        # Guardar el estado de salud de la sesión ANTES de la subida final
+        self._write_session_health()
 
         if self.ftp_transmitter:
             log.info("Iniciando subida final de logs de sistema...")

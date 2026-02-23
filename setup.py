@@ -5,16 +5,21 @@ import subprocess
 import sys
 from pathlib import Path
 import time
+import json
+import tarfile
+import shutil
 
 TARGET_USER = "cosigein"
 APP_DIR = Path(f"/home/{TARGET_USER}/fire-truck-app")
 LOG_DIR = Path(f"/home/{TARGET_USER}/logs")
 DATA_DIR = Path(f"/home/{TARGET_USER}/datos")
 SSH_KEY = Path(f"/home/{TARGET_USER}/.ssh/id_ed25519")
+VERSIONS_DIR = Path(f"/home/{TARGET_USER}/versions")
+SESSION_HEALTH_FILE = APP_DIR / "session_health.json"
 SERVICES = ["updater.service", "app.service"]
 
 REPO_URL = "git@github.com:p12regaf/fire-truck-app.git"
-GIT_BRANCH = "main"
+GIT_BRANCH = "Net-Security"
 
 def run(cmd, sudo=False, cwd=None, ignore_errors=False):
     if sudo:
@@ -38,7 +43,7 @@ def run(cmd, sudo=False, cwd=None, ignore_errors=False):
         sys.exit(result.returncode)
 
 def ensure_dirs():
-    run(["mkdir", "-p", str(APP_DIR), str(LOG_DIR), str(DATA_DIR)], sudo=True)
+    run(["mkdir", "-p", str(APP_DIR), str(LOG_DIR), str(DATA_DIR), str(VERSIONS_DIR)], sudo=True)
 
 RESOLVED_CONF_PATH = Path("/etc/systemd/resolved.conf")
 FALLBACK_DNS_LINE = "FallbackDNS=1.1.1.1 8.8.8.8 9.9.9.9"
@@ -150,6 +155,7 @@ def repo_step():
         run(["git", "clone", "-b", GIT_BRANCH, REPO_URL, str(APP_DIR)], cwd=parent)
     else:
         print(">>> Actualizando repositorio")
+        archive_current_version()
         run(["git", "fetch", "--all", "--prune"], cwd=APP_DIR)
         run(["git", "reset", "--hard", f"origin/{GIT_BRANCH}"], cwd=APP_DIR)
         run(["git", "clean", "-fd"], cwd=APP_DIR)
@@ -193,11 +199,109 @@ def install_services():
         run(["sudo", "systemctl", "enable", service_name])
         # Ya no se hace restart ni status
 
+def archive_current_version():
+    """Comprime la versión actual del código antes de actualizarla."""
+    version_file = APP_DIR / ".version"
+    if not version_file.exists():
+        print("⚠ No se encontró .version, no se puede archivar.")
+        return
+    
+    version = version_file.read_text().strip()
+    archive_path = VERSIONS_DIR / "current.tar.gz"
+    
+    print(f">>> Archivando versión {version} en {archive_path}...")
+    try:
+        VERSIONS_DIR.mkdir(parents=True, exist_ok=True)
+        with tarfile.open(archive_path, "w:gz") as tar:
+            for item in APP_DIR.iterdir():
+                # Excluir .venv, .git, config (no forman parte del código desplegable)
+                if item.name in ('.venv', '.git', 'config', '__pycache__', 'session_health.json'):
+                    continue
+                tar.add(str(item), arcname=item.name)
+        print(f">>> Versión {version} archivada correctamente.")
+    except Exception as e:
+        print(f"⚠ No se pudo archivar la versión actual: {e}")
+
+def check_session_health() -> bool:
+    """
+    Lee session_health.json del último arranque.
+    - Si had_internet=True: marca la versión como estable.
+    - Si had_internet=False: realiza un rollback a la versión estable.
+    Devuelve True si se debe saltar repo_step (tras un rollback).
+    """
+    if not SESSION_HEALTH_FILE.exists():
+        print(">>> No se encontró session_health.json (primera ejecución o crash). Continuando normal.")
+        return False
+    
+    try:
+        with open(SESSION_HEALTH_FILE, 'r') as f:
+            health = json.load(f)
+        # Limpiar el archivo para el siguiente ciclo
+        SESSION_HEALTH_FILE.unlink(missing_ok=True)
+    except (json.JSONDecodeError, IOError) as e:
+        print(f"⚠ No se pudo leer session_health.json: {e}")
+        return False
+    
+    had_internet = health.get("had_internet", False)
+    version = health.get("version", "desconocida")
+    
+    current_archive = VERSIONS_DIR / "current.tar.gz"
+    stable_archive = VERSIONS_DIR / "stable.tar.gz"
+    
+    if had_internet:
+        print(f">>> Última sesión (v{version}) tuvo internet. Marcando como ESTABLE.")
+        if current_archive.exists():
+            try:
+                shutil.copy2(str(current_archive), str(stable_archive))
+                print(f">>> Versión estable actualizada: {stable_archive}")
+            except IOError as e:
+                print(f"⚠ No se pudo copiar a stable.tar.gz: {e}")
+        else:
+            print(">>> No hay current.tar.gz para marcar como estable (primera ejecución).")
+        return False
+    else:
+        print(f"⚠ Última sesión (v{version}) NO tuvo internet. Intentando ROLLBACK...")
+        return rollback_to_stable()
+
+def rollback_to_stable() -> bool:
+    """
+    Extrae stable.tar.gz sobre el directorio de la app.
+    Devuelve True si el rollback se realizó (y se debe saltar repo_step).
+    """
+    stable_archive = VERSIONS_DIR / "stable.tar.gz"
+    
+    if not stable_archive.exists():
+        print("⚠ No hay versión estable guardada. No se puede hacer rollback.")
+        return False
+    
+    try:
+        print(f">>> Extrayendo versión estable desde {stable_archive}...")
+        # Limpiar archivos de código actuales (preservar .venv, .git, config)
+        for item in APP_DIR.iterdir():
+            if item.name in ('.venv', '.git', 'config', '__pycache__'):
+                continue
+            if item.is_dir():
+                shutil.rmtree(str(item))
+            else:
+                item.unlink()
+        
+        # Extraer el archivo estable
+        with tarfile.open(stable_archive, "r:gz") as tar:
+            tar.extractall(path=str(APP_DIR))
+        
+        print(">>> ¡ROLLBACK completado! Saltando actualización de Git.")
+        return True
+    except Exception as e:
+        print(f"⚠ Error durante el rollback: {e}")
+        return False
+
 def main():
     ensure_dirs()
     fix_dns()
     wait_for_network()
-    repo_step()
+    skip_update = check_session_health()
+    if not skip_update:
+        repo_step()
     install_services()
     venv_step()
     print("\n✔ Setup completado correctamente")
