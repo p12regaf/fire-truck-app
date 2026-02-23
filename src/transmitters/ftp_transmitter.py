@@ -6,20 +6,10 @@ import time
 import socket
 from datetime import datetime
 
+from src.utils.network import check_internet_connection
+
 log = logging.getLogger(__name__)
 
-def check_internet_connection(host="8.8.8.8", port=53, timeout=3):
-    """
-    Intenta conectarse a un host conocido (como el DNS de Google) para
-    verificar si hay una conexión a internet activa.
-    """
-    try:
-        socket.setdefaulttimeout(timeout)
-        socket.socket(socket.AF_INET, socket.SOCK_STREAM).connect((host, port))
-        return True
-    except socket.error:
-        log.debug("No se pudo conectar a %s. Asumiendo que no hay internet.", host)
-        return False
 
 class FTPTransmitter(threading.Thread):
     """
@@ -28,12 +18,13 @@ class FTPTransmitter(threading.Thread):
     - Sube archivos de estado en tiempo real (_RealTime.txt) con mayor frecuencia.
     """
 
-    def __init__(self, config: dict, shutdown_event: threading.Event, session_manager):
+    def __init__(self, config: dict, shutdown_event: threading.Event, session_manager, app_controller=None):
         super().__init__(name="FTPTransmitter")
         self.ftp_config = config.get('ftp', {})
         self.paths_config = config.get('paths', {})
         self.shutdown_event = shutdown_event
         self.session_manager = session_manager
+        self.app_controller = app_controller
         
         self.log_scan_interval = self.ftp_config.get('log_upload_interval_sec', 300)
         self.realtime_scan_interval = self.ftp_config.get('realtime_upload_interval_sec', 30)
@@ -99,6 +90,10 @@ class FTPTransmitter(threading.Thread):
         if not check_internet_connection():
             log.info("No hay conexión a internet. Omitiendo ciclo de subida FTP.")
             return
+        
+        # Notificar al controlador que hay internet
+        if self.app_controller:
+            self.app_controller.set_internet_detected()
         
         data_root = self.paths_config.get('data_root')
         if not os.path.isdir(data_root):
