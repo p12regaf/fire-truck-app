@@ -52,6 +52,11 @@ def main() -> None:
         action="store_true",
         help="Activar el hilo de monitoreo de pruebas (System Monitor)."
     )
+    parser.add_argument(
+        "--simulate",
+        action="store_true",
+        help="Activar modo simulación (datos ficticios)."
+    )
     args = parser.parse_args()
 
     # ---------------------------------------------------------------------
@@ -80,7 +85,7 @@ def main() -> None:
     # ---------------------------------------------------------------------
     # Controlador principal
     # ---------------------------------------------------------------------
-    app_controller = AppController(config)
+    app_controller = AppController(config, simulate=args.simulate)
 
     # ---------------------------------------------------------------------
     # Sistema de Monitoreo (Opcional)
@@ -179,12 +184,15 @@ def main() -> None:
     log.info("fire-truck-app detenido limpiamente")
 
     # Limpieza defensiva de GPIO (si aplica)
-    try:
-        import RPi.GPIO as GPIO
-        GPIO.cleanup()
-        log.info("GPIO cleanup completado")
-    except (ImportError, RuntimeError):
-        pass
+    if not args.simulate:
+        try:
+            import RPi.GPIO as GPIO
+            GPIO.cleanup()
+            log.info("GPIO cleanup completado")
+        except (ImportError, RuntimeError):
+            pass
+    else:
+        log.info("Modo SIMULACIÓN: Saltando GPIO cleanup físico.")
 
     sys.exit(0)
 

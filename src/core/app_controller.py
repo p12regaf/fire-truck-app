@@ -18,13 +18,19 @@ from .power_monitor import PowerMonitor
 from .alarm_monitor import AlarmMonitor
 from .reboot_monitor import RebootMonitor
 
+from .simulated_acquirers import (
+    SimulatedCANAcquirer, SimulatedGPSAcquirer,
+    SimulatedIMUAcquirer, SimulatedGPIOAcquirer
+)
+
 from src.utils.network import check_internet_connection
 
 log = logging.getLogger(__name__)
 
 class AppController:
-    def __init__(self, config: dict):
+    def __init__(self, config: dict, simulate: bool = False):
         self.config = config
+        self.simulate = simulate
         self.data_queue = Queue()
         self.shutdown_event = threading.Event()
         self.workers = []
@@ -61,19 +67,31 @@ class AppController:
         sources_config = self.config.get('data_sources', {})
         
         if sources_config.get('can', {}).get('enabled', False):
-            self.workers.append(CANAcquirer(self.config, self.data_queue, self.shutdown_event))
+            if self.simulate:
+                self.workers.append(SimulatedCANAcquirer(self.config, self.data_queue, self.shutdown_event))
+            else:
+                self.workers.append(CANAcquirer(self.config, self.data_queue, self.shutdown_event))
             self.active_data_types.append('can')
         
         if sources_config.get('gps', {}).get('enabled', False):
-            self.workers.append(GPSAcquirer(self.config, self.data_queue, self.shutdown_event))
+            if self.simulate:
+                self.workers.append(SimulatedGPSAcquirer(self.config, self.data_queue, self.shutdown_event))
+            else:
+                self.workers.append(GPSAcquirer(self.config, self.data_queue, self.shutdown_event))
             self.active_data_types.append('gps')
             
         if sources_config.get('estabilometro', {}).get('enabled', False):
-            self.workers.append(IMUAcquirer(self.config, self.data_queue, self.shutdown_event))
+            if self.simulate:
+                self.workers.append(SimulatedIMUAcquirer(self.config, self.data_queue, self.shutdown_event))
+            else:
+                self.workers.append(IMUAcquirer(self.config, self.data_queue, self.shutdown_event))
             self.active_data_types.append('estabilometro')
             
         if sources_config.get('gpio_rotativo', {}).get('enabled', False):
-            self.workers.append(GPIOAcquirer(self.config, self.data_queue, self.shutdown_event))
+            if self.simulate:
+                self.workers.append(SimulatedGPIOAcquirer(self.config, self.data_queue, self.shutdown_event))
+            else:
+                self.workers.append(GPIOAcquirer(self.config, self.data_queue, self.shutdown_event))
             self.active_data_types.append('rotativo')
 
         if self.config.get('ftp', {}).get('enabled', False):
@@ -96,7 +114,10 @@ class AppController:
         log.info(f"{len(self.workers)} trabajadores inicializados.")
         log.info(f"Tipos de datos activos: {self.active_data_types}")
 
-        self._setup_gpio_pins()
+        if not self.simulate:
+            self._setup_gpio_pins()
+        else:
+            log.info("Modo SIMULACIÓN: Saltando configuración física de GPIO.")
         
         # Crear los directorios de datos necesarios (ej. /datos/CAN, /datos/GPS)
         self.session_manager.ensure_data_directories(self.active_data_types)
