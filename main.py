@@ -47,6 +47,11 @@ def main() -> None:
         action="store_true",
         help="Lanzar la aplicación con interfaz gráfica."
     )
+    parser.add_argument(
+        "--test-mode",
+        action="store_true",
+        help="Activar el hilo de monitoreo de pruebas (System Monitor)."
+    )
     args = parser.parse_args()
 
     # ---------------------------------------------------------------------
@@ -76,6 +81,20 @@ def main() -> None:
     # Controlador principal
     # ---------------------------------------------------------------------
     app_controller = AppController(config)
+
+    # ---------------------------------------------------------------------
+    # Sistema de Monitoreo (Opcional)
+    # ---------------------------------------------------------------------
+    monitor = None
+    if args.test_mode or config.get("system", {}).get("test_mode", False):
+        try:
+            from src.tests.system_monitor import SystemMonitor
+            monitor = SystemMonitor(app_controller)
+            app_controller.register_monitor(monitor.get_queue())
+            monitor.start()
+            log.info("System Monitor integrado y funcionando.")
+        except Exception as exc:
+            log.error(f"No se pudo iniciar el System Monitor: {exc}")
 
     # Referencia explícita a la GUI (evita hacks con locals)
     main_window: Optional[MainWindow] = None
@@ -153,6 +172,10 @@ def main() -> None:
     # ---------------------------------------------------------------------
     # Limpieza final
     # ---------------------------------------------------------------------
+    if monitor is not None:
+        monitor.stop()
+        monitor.join(timeout=2.0)
+
     log.info("fire-truck-app detenido limpiamente")
 
     # Limpieza defensiva de GPIO (si aplica)
