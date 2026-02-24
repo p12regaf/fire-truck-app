@@ -49,6 +49,11 @@ class AlarmMonitor(threading.Thread):
         log.info(f"AlarmMonitor iniciado. Vigilando pin {self.pin} para estado '{'HIGH' if self.trigger_state == GPIO.HIGH else 'LOW'}'...")
 
         while not self.shutdown_event.is_set():
+            if self.app_controller.simulate:
+                # En modo simulación, no leemos de pins reales
+                self.shutdown_event.wait(5.0)
+                continue
+
             if GPIO.input(self.pin) == self.trigger_state:
                 log.critical("¡ALARMA DE FUENTE DE ALIMENTACIÓN DETECTADA! Iniciando apagado de emergencia.")
                 
