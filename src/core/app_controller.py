@@ -33,6 +33,9 @@ class AppController:
         self.data_lock = threading.Lock()
         self.log_line_counters = {} # Contador de líneas para los logs
         
+        # Sistema de monitoreo externo
+        self.monitors = []
+        
         # Tracking de conectividad para el sistema de rollback
         self.had_internet = False
         self.session_health_file = config.get('paths', {}).get(
@@ -163,6 +166,11 @@ class AppController:
         if not self.had_internet:
             self.had_internet = True
             log.info("Conectividad a internet detectada para esta sesión.")
+
+    def register_monitor(self, monitor_queue: Queue):
+        """Registra una cola externa para recibir copias de todos los paquetes de datos."""
+        self.monitors.append(monitor_queue)
+        log.info(f"Monitor externo registrado. Total monitors: {len(self.monitors)}")
 
     def _check_initial_connectivity(self):
         """Comprobación de conectividad al arranque, independiente de FTP."""
@@ -328,6 +336,13 @@ class AppController:
 
                 # Actualizar el archivo de tiempo real
                 self._update_realtime_file(data_packet['type'], log_line)
+
+                # Notificar a los monitores registrados
+                for monitor_queue in self.monitors:
+                    try:
+                        monitor_queue.put_nowait(data_packet)
+                    except Exception:
+                        pass # Evitar que un monitor lento bloquee el procesamiento
 
             except Empty:
                 continue
