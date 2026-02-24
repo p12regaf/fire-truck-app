@@ -18,7 +18,7 @@ from .power_monitor import PowerMonitor
 from .alarm_monitor import AlarmMonitor
 from .reboot_monitor import RebootMonitor
 
-from .simulated_acquirers import (
+from src.data_acquirers.simulated_acquirers import (
     SimulatedCANAcquirer, SimulatedGPSAcquirer,
     SimulatedIMUAcquirer, SimulatedGPIOAcquirer
 )
