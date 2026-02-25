@@ -8,9 +8,6 @@ import time
 import json
 import shutil
 import tarfile
-import json
-import tarfile
-import shutil
 
 TARGET_USER = "cosigein"
 APP_DIR = Path(f"/home/{TARGET_USER}/fire-truck-app")
@@ -24,7 +21,7 @@ UPDATE_STATE_FILE = Path(f"/home/{TARGET_USER}/update_state.json")
 BACKUP_FILE = Path(f"/home/{TARGET_USER}/fire-truck-app_stable_backup.tar.gz")
 
 REPO_URL = "git@github.com:p12regaf/fire-truck-app.git"
-GIT_BRANCH = "Net-Security"
+GIT_BRANCH = "main"
 
 def run(cmd, sudo=False, cwd=None, ignore_errors=False):
     if sudo:
@@ -86,7 +83,7 @@ def restore_local_snapshot():
         return False
 
 def ensure_dirs():
-    run(["mkdir", "-p", str(APP_DIR), str(LOG_DIR), str(DATA_DIR)], sudo=True)
+    return run(["mkdir", "-p", str(APP_DIR), str(LOG_DIR), str(DATA_DIR)], sudo=True)
 
 def fix_dns():
     print(">>> Configurando DNS permanente...")
@@ -100,10 +97,10 @@ FallbackDNS=9.9.9.9
 
 def wait_for_network():
     print(">>> Esperando red (DNS)...")
-    for _ in range(10):
+    for i in range(10):
         result = subprocess.run(["getent", "hosts", "github.com"], stdout=subprocess.DEVNULL)
         if result.returncode == 0:
-            print(f">>> Red OK (detectada en {i+1}s)")
+            print(f">>> Red OK (detectada en {(i+1)*3}s)")
             return
         time.sleep(3)
     print("ERROR: sin DNS / Internet")
@@ -165,8 +162,6 @@ def repo_step():
         run(["git", "fetch", "--all", "--prune"], cwd=APP_DIR)
         run(["git", "reset", "--hard", f"origin/{GIT_BRANCH}"], cwd=APP_DIR)
         run(["git", "clean", "-fdx"], cwd=APP_DIR)
-    # Asegurarse de que el directorio APP_DIR exista
-    APP_DIR.mkdir(parents=True, exist_ok=True)
 
     # Crear config.yaml si no existe
     config_dir = APP_DIR / "config"
@@ -298,14 +293,22 @@ def rollback_to_stable() -> bool:
 
 def main():
     print("\n=== INICIO DEL SETUP VERBOSE ===")
-    if ensure_dirs() != 0: sys.exit(1)
+    if ensure_dirs() != 0:
+        sys.exit(1)
     fix_dns()
     wait_for_network()
-    repo_step()
+    
+    # Comprobar salud de la sesión anterior y realizar rollback si es necesario
+    skip_repo = check_session_health()
+    
+    if not skip_repo:
+        archive_current_version()
+        repo_step()
+    
     install_services()
     venv_step()
-    if network_ok:
-        create_local_snapshot()
+    create_local_snapshot()
+    
     print("\n✔ Setup completado correctamente (verbose)")
 
 if __name__ == "__main__":
