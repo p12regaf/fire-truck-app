@@ -290,9 +290,13 @@ def rollback_to_stable() -> bool:
     except Exception as e:
         print(f"⚠ Error durante el rollback: {e}")
         return False
-
+def fixes():
+    run(
+    ["sudo", "stty", "-F", "/dev/serial1", "115200", "raw", "-echo"],
+    check=False
+    )
 def main():
-    print("\n=== INICIO DEL SETUP VERBOSE ===")
+    print("\n=== INICIO DEL SETUP ===")
     if ensure_dirs() != 0:
         sys.exit(1)
     fix_dns()
@@ -308,7 +312,7 @@ def main():
     install_services()
     venv_step()
     create_local_snapshot()
-    
+    fixes()
     print("\n✔ Setup completado correctamente (verbose)")
 
 if __name__ == "__main__":
