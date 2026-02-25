@@ -12,7 +12,8 @@ class IMUAcquirer(BaseAcquirer):
     DATA_KEYS = [
         "ax", "ay", "az", "gx", "gy", "gz",
         "roll", "pitch", "yaw", "timeantwifi",
-        "usciclo1", "usciclo2", "SI", "SIF", "k3"
+        "usciclo1", "usciclo2", "usciclo3", "usciclo4", "usciclo5",
+        "si", "accmag", "microsds", "k3"
     ]
     EXPECTED_VALUES = len(DATA_KEYS)
 
