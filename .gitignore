@@ -8,3 +8,7 @@ config/config.yaml
 # Archivos de caché de Python
 __pycache__/
 *.pyc
+
+# Archivos de estado de sesión (generados en runtime)
+session_health.json
+shutdown_state.json

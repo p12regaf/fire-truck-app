@@ -1,3 +1,4 @@
+import json
 import logging
 import threading
 from queue import Queue, Empty
@@ -19,11 +20,19 @@ from .reboot_monitor import RebootMonitor
 from .connectivity_monitor import ConnectivityMonitor
 from src.utils.update_manager import UpdateManager
 
+from src.data_acquirers.simulated_acquirers import (
+    SimulatedCANAcquirer, SimulatedGPSAcquirer,
+    SimulatedIMUAcquirer, SimulatedGPIOAcquirer
+)
+
+from src.utils.network import check_internet_connection
+
 log = logging.getLogger(__name__)
 
 class AppController:
-    def __init__(self, config: dict):
+    def __init__(self, config: dict, simulate: bool = False):
         self.config = config
+        self.simulate = simulate
         self.data_queue = Queue()
         self.shutdown_event = threading.Event()
         self.workers = []
@@ -32,6 +41,16 @@ class AppController:
         self.data_lock = threading.Lock()
         self.log_line_counters = {} # Contador de líneas para los logs
         self.self_test_passed = False
+        
+        # Sistema de monitoreo externo
+        self.monitors = []
+        
+        # Tracking de conectividad para el sistema de rollback
+        self.had_internet = False
+        self.session_health_file = config.get('paths', {}).get(
+            'session_health_file',
+            os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'session_health.json')
+        )
         
         self.session_manager = SessionManager(config)
         self.update_manager = UpdateManager(config)
@@ -52,24 +71,36 @@ class AppController:
         sources_config = self.config.get('data_sources', {})
         
         if sources_config.get('can', {}).get('enabled', False):
-            self.workers.append(CANAcquirer(self.config, self.data_queue, self.shutdown_event))
+            if self.simulate:
+                self.workers.append(SimulatedCANAcquirer(self.config, self.data_queue, self.shutdown_event))
+            else:
+                self.workers.append(CANAcquirer(self.config, self.data_queue, self.shutdown_event))
             self.active_data_types.append('can')
         
         if sources_config.get('gps', {}).get('enabled', False):
-            self.workers.append(GPSAcquirer(self.config, self.data_queue, self.shutdown_event))
+            if self.simulate:
+                self.workers.append(SimulatedGPSAcquirer(self.config, self.data_queue, self.shutdown_event))
+            else:
+                self.workers.append(GPSAcquirer(self.config, self.data_queue, self.shutdown_event))
             self.active_data_types.append('gps')
             
         if sources_config.get('estabilometro', {}).get('enabled', False):
-            self.workers.append(IMUAcquirer(self.config, self.data_queue, self.shutdown_event))
+            if self.simulate:
+                self.workers.append(SimulatedIMUAcquirer(self.config, self.data_queue, self.shutdown_event))
+            else:
+                self.workers.append(IMUAcquirer(self.config, self.data_queue, self.shutdown_event))
             self.active_data_types.append('estabilometro')
             
         if sources_config.get('gpio_rotativo', {}).get('enabled', False):
-            self.workers.append(GPIOAcquirer(self.config, self.data_queue, self.shutdown_event))
+            if self.simulate:
+                self.workers.append(SimulatedGPIOAcquirer(self.config, self.data_queue, self.shutdown_event))
+            else:
+                self.workers.append(GPIOAcquirer(self.config, self.data_queue, self.shutdown_event))
             self.active_data_types.append('rotativo')
 
         if self.config.get('ftp', {}).get('enabled', False):
             log.info("FTP Transmitter está habilitado. Inicializando...")
-            self.ftp_transmitter = FTPTransmitter(self.config, self.shutdown_event, self.session_manager)
+            self.ftp_transmitter = FTPTransmitter(self.config, self.shutdown_event, self.session_manager, app_controller=self)
             self.workers.append(self.ftp_transmitter)
         
         if self.config.get('system', {}).get('power_monitor', {}).get('enabled', False):
@@ -91,7 +122,10 @@ class AppController:
         log.info(f"{len(self.workers)} trabajadores inicializados.")
         log.info(f"Tipos de datos activos: {self.active_data_types}")
 
-        self._setup_gpio_pins()
+        if not self.simulate:
+            self._setup_gpio_pins()
+        else:
+            log.info("Modo SIMULACIÓN: Saltando configuración física de GPIO.")
         
         # Crear los directorios de datos necesarios (ej. /datos/CAN, /datos/GPS)
         self.session_manager.ensure_data_directories(self.active_data_types)
@@ -156,10 +190,52 @@ class AppController:
         log.info("Escritura de cabeceras completada.")
 
 
+    def set_internet_detected(self):
+        """Marca que se ha detectado conexión a internet en esta sesión."""
+        if not self.had_internet:
+            self.had_internet = True
+            log.info("Conectividad a internet detectada para esta sesión.")
+
+    def register_monitor(self, monitor_queue: Queue):
+        """Registra una cola externa para recibir copias de todos los paquetes de datos."""
+        self.monitors.append(monitor_queue)
+        log.info(f"Monitor externo registrado. Total monitors: {len(self.monitors)}")
+
+    def _check_initial_connectivity(self):
+        """Comprobación de conectividad al arranque, independiente de FTP."""
+        log.info("Realizando comprobación inicial de conectividad...")
+        if check_internet_connection():
+            self.set_internet_detected()
+        else:
+            log.warning("No se detectó conexión a internet en la comprobación inicial.")
+
+    def _write_session_health(self):
+        """Escribe el estado de conectividad de la sesión para que setup.py lo lea en el próximo arranque."""
+        try:
+            version = "unknown"
+            version_file = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.version')
+            if os.path.exists(version_file):
+                with open(version_file, 'r') as f:
+                    version = f.read().strip()
+            
+            health_data = {
+                "had_internet": self.had_internet,
+                "version": version,
+                "timestamp": datetime.now().isoformat()
+            }
+            with open(self.session_health_file, 'w') as f:
+                json.dump(health_data, f, indent=2)
+            log.info(f"Estado de salud de sesión guardado: had_internet={self.had_internet}, version={version}")
+        except IOError as e:
+            log.error(f"No se pudo escribir session_health.json: {e}")
+
     def start(self):
         """Inicia todos los hilos de trabajo y el procesador de datos."""
         log.info("Iniciando todos los servicios del controlador...")
         
+<<<<<<< Working
+        self._check_initial_connectivity()
+=======
         # 1. Realizar Self-Test antes de arrancar todo
         if not self._perform_self_test():
             log.critical("¡FALLO EN EL SELF-TEST! El sistema podría no ser estable.")
@@ -169,6 +245,7 @@ class AppController:
             log.info("Self-Test completado con ÉXITO.")
             self.self_test_passed = True
 
+>>>>>>> main
         self._write_session_headers()
         
         self.processor_thread.start()
@@ -202,8 +279,13 @@ class AppController:
         log.info("Iniciando secuencia de apagado...")
         self.shutdown_event.set()
 
+<<<<<<< Working
+        # Guardar el estado de salud de la sesión ANTES de la subida final
+        self._write_session_health()
+=======
         # Evaluar la salud de la sesión antes de cerrar todo
         self._evaluate_session_health()
+>>>>>>> main
 
         if self.ftp_transmitter:
             log.info("Iniciando subida final de logs de sistema...")
@@ -318,6 +400,13 @@ class AppController:
 
                 # Actualizar el archivo de tiempo real
                 self._update_realtime_file(data_packet['type'], log_line)
+
+                # Notificar a los monitores registrados
+                for monitor_queue in self.monitors:
+                    try:
+                        monitor_queue.put_nowait(data_packet)
+                    except Exception:
+                        pass # Evitar que un monitor lento bloquee el procesamiento
 
             except Empty:
                 continue

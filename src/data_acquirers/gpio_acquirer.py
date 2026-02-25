@@ -22,22 +22,20 @@ class GPIOAcquirer(BaseAcquirer):
         return True
 
     def _acquire_data(self):
-        self.shutdown_event.wait(self.period)
-        
-        if self.shutdown_event.is_set(): # Añadimos una comprobación para salir rápido
-            return
-
-        status_int = GPIO.input(self.pin)
-        # ### CAMBIO: Se envía 1 o 0 en lugar de "ON"/"OFF"
-        status_val = 1 if status_int == GPIO.HIGH else 0
-        
-        data = {
-            "pin": self.pin,
-            "status": status_val
-        }
-        packet = self._create_data_packet("rotativo", data)
-        self.data_queue.put(packet) 
-
+        while not self.shutdown_event.is_set():
+            status_int = GPIO.input(self.pin)
+            status_val = 1 if status_int == GPIO.HIGH else 0
+            
+            data = {
+                "pin": self.pin,
+                "status": status_val
+            }
+            packet = self._create_data_packet("rotativo", data)
+            self.data_queue.put(packet)
+            
+            # Esperar el periodo
+            if self.shutdown_event.wait(self.period):
+                break
     def _cleanup(self):
         # La limpieza se hará de forma centralizada al final de la aplicación.
         log.info("GPIOAcquirer finalizando. La limpieza de GPIO se gestionará globalmente.")
