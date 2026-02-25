@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 import subprocess
 import sys
+import tempfile
+import os
 from pathlib import Path
 
 # --- Config fija ---
@@ -26,26 +28,25 @@ def main():
 
     target = f"{REMOTE_USER}@{host}"
 
-    # Crear el directorio remoto antes de subir archivos
-    run([
-        "ssh", target, f"mkdir -p {REMOTE_APP_DIR}"
-    ])
+    # Usar SSH ControlMaster para pedir la contraseña una sola vez
+    ctrl_socket = os.path.join(tempfile.gettempdir(), f"ssh-deploy-{host}")
+    ssh_opts = ["-o", f"ControlPath={ctrl_socket}", "-o", "ControlMaster=auto", "-o", "ControlPersist=60"]
 
-    # 1. Copiar script
-    run([
-        "scp",
-        str(LOCAL_SCRIPT),
-        f"{target}:{REMOTE_SCRIPT}"
-    ])
+    try:
+        # Crear el directorio remoto (esto abre la conexión y pide la contraseña)
+        run(["ssh", *ssh_opts, target, f"mkdir -p {REMOTE_APP_DIR}"])
 
-    # 2. Ejecutar script en la placa
-    run([
-        "ssh",
-        target,
-        f"python3 {REMOTE_SCRIPT}"
-    ])
+        # 1. Copiar script (reutiliza la conexión, sin contraseña)
+        run(["scp", *ssh_opts, str(LOCAL_SCRIPT), f"{target}:{REMOTE_SCRIPT}"])
 
-    print("✔ Script enviado y ejecutado correctamente")
+        # 2. Ejecutar script en la placa (reutiliza la conexión)
+        run(["ssh", *ssh_opts, target, f"python3 {REMOTE_SCRIPT}"])
+
+        print("✔ Script enviado y ejecutado correctamente")
+    finally:
+        # Cerrar la conexión de control
+        subprocess.run(["ssh", "-O", "exit", "-o", f"ControlPath={ctrl_socket}", target],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 if __name__ == "__main__":
     main()

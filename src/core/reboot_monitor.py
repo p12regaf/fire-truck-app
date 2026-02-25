@@ -40,6 +40,11 @@ class RebootMonitor(threading.Thread):
             return
 
         # No hay bucle. La única tarea es poner el pin en ALTO.
+        # La configuración del pin como salida se hace en AppController.
+        if self.app_controller.simulate:
+            log.info("RebootMonitor (Simulado): Saltando salida física GPIO.")
+            return
+
         try:
             GPIO.output(self.pin, GPIO.HIGH)
             log.info(f"RebootMonitor: Pin {self.pin} establecido en ALTO (HIGH).")
