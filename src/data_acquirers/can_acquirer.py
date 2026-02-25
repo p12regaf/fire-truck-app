@@ -185,6 +185,7 @@ class CANAcquirer(BaseAcquirer):
             parsed_data = self._parse_j1939_message(pgn, msg.data)
             
             if parsed_data:
+                self.data_seen = True
                 pgn_info = self.pgn_map[pgn]
                 
                 with self.data_lock:

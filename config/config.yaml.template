@@ -6,6 +6,7 @@ system:
   device_number: "000"
   log_level: "DEBUG"       # DEBUG, INFO, WARNING, ERROR, CRITICAL
   start_with_gui: false 
+  simulation_mode: false # If true, acquirers generate fake data to test logic
 
 # TODO: Habilitar monitores.
   power_monitor:
