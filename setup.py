@@ -181,13 +181,15 @@ def repo_step():
                 if item.name not in ('.venv', 'config', 'session_health.json', 'setup.py'):
                     run(["sudo", "rm", "-rf", str(item)])
         
-        print(f">>> Clonando repo {REPO_URL}")
-        run(["git", "clone", "-b", GIT_BRANCH, REPO_URL, str(APP_DIR)], cwd=parent)
-    else:
-        print(">>> Actualizando repositorio")
-        run(["git", "fetch", "--all", "--prune"], cwd=APP_DIR)
-        run(["git", "reset", "--hard", f"origin/{GIT_BRANCH}"], cwd=APP_DIR)
-        run(["git", "clean", "-fd"], cwd=APP_DIR)
+        print(f">>> Inicializando y vinculando repo {REPO_URL}")
+        if run(["git", "init"], cwd=APP_DIR) != 0: return 1
+        if run(["git", "remote", "add", "origin", REPO_URL], cwd=APP_DIR) != 0: return 1
+    
+    print(">>> Actualizando repositorio")
+    if run(["git", "fetch", "--all", "--prune"], cwd=APP_DIR) != 0: return 1
+    if run(["git", "reset", "--hard", f"origin/{GIT_BRANCH}"], cwd=APP_DIR) != 0: return 1
+    if run(["git", "clean", "-fd"], cwd=APP_DIR) != 0: return 1
+    return 0
 
     # Crear config.yaml si no existe
     config_dir = APP_DIR / "config"
@@ -205,21 +207,29 @@ def venv_step():
     venv_dir = APP_DIR / ".venv"
     req_file = APP_DIR / "requirements.txt"
     timestamp_file = venv_dir / ".last_install"
+    pip_bin = venv_dir / "bin/pip"
+    python_bin = venv_dir / "bin/python3"
     
-    # Si no existe .venv, lo creamos
-    if not venv_dir.exists():
-        run(["python3", "-m", "venv", ".venv"], cwd=APP_DIR)
+    # Si no existe .venv o falta el binario de python, lo creamos de cero
+    if not venv_dir.exists() or not python_bin.exists():
+        print(">>> Creando entorno virtual...")
+        if venv_dir.exists():
+            run(["sudo", "rm", "-rf", str(venv_dir)])
+        if run(["python3", "-m", "venv", ".venv"], cwd=APP_DIR) != 0: return 1
     
     # Solo corremos pip si requirements.txt es más nuevo que nuestro último timestamp
     needs_install = True
-    if timestamp_file.exists() and req_file.exists():
+    if timestamp_file.exists() and req_file.exists() and pip_bin.exists():
         if timestamp_file.stat().st_mtime > req_file.stat().st_mtime:
             needs_install = False
             print(">>> Requerimientos al día, saltando pip install.")
 
     if needs_install:
-        run([str(venv_dir / "bin/pip"), "install", "-r", "requirements.txt"], cwd=APP_DIR)
+        print(">>> Instalando requerimientos con pip...")
+        if run([str(pip_bin), "install", "-r", "requirements.txt"], cwd=APP_DIR) != 0:
+            return 1
         timestamp_file.touch()
+    return 0
 
 def install_services():
     print("\n>>> Instalando servicios systemd")
@@ -347,10 +357,15 @@ def main():
     
     if not skip_repo:
         archive_current_version()
-        repo_step()
+        if repo_step() != 0:
+            print("⚠ Error crítico en repo_step. Abortando setup.")
+            sys.exit(1)
     
     install_services()
-    venv_step()
+    if venv_step() != 0:
+        print("⚠ Error crítico en venv_step. Abortando setup.")
+        sys.exit(1)
+    
     create_local_snapshot()
     fixes()
     print("\n✔ Setup completado correctamente (verbose)")
