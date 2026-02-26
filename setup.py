@@ -292,8 +292,8 @@ def rollback_to_stable() -> bool:
         return False
 def fixes():
     run(
-    ["sudo", "stty", "-F", "/dev/serial1", "115200", "raw", "-echo"],
-    check=False
+        ["stty", "-F", "/dev/serial1", "115200", "raw", "-echo"],
+        ignore_errors=True
     )
 def main():
     print("\n=== INICIO DEL SETUP ===")
