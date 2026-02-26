@@ -291,10 +291,8 @@ def rollback_to_stable() -> bool:
         print(f"⚠ Error durante el rollback: {e}")
         return False
 def fixes():
-    run(
-        ["stty", "-F", "/dev/serial1", "115200", "raw", "-echo"],
-        ignore_errors=True
-    )
+    return
+    run(["stty", "-F", "/dev/serial1", "115200", "raw", "-echo"],ignore_errors=True)
 def main():
     print("\n=== INICIO DEL SETUP ===")
     if ensure_dirs() != 0:
