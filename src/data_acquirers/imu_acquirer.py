@@ -56,7 +56,7 @@ class IMUAcquirer(BaseAcquirer):
             except (ValueError, IndexError):
                 # Si falla (ValueError) o la línea está vacía (IndexError),
                 # la consideramos una cabecera o basura y la ignoramos silenciosamente.
-                log.info(f"Línea ignorada (posible cabecera o línea vacía): {line}")
+                log.debug(f"Línea ignorada (posible cabecera o línea vacía): {line}")
                 return None
 
             # 2. AHORA, si sabemos que es una línea de datos, validamos que tenga el número correcto de valores.

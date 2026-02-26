@@ -63,10 +63,81 @@ class FTPTransmitter(threading.Thread):
                 self._perform_realtime_upload_cycle()
                 last_realtime_scan_time = current_time
             
+            # Comprobar si hay archivos archivados para subir
+            self._perform_archive_upload_cycle()
+
             # Esperar un poco para no consumir CPU
             self.shutdown_event.wait(5)
 
         log.info("Transmisor FTP detenido.")
+
+    def _perform_archive_upload_cycle(self):
+        """Escanea y sube los archivos de log archivados por el logger."""
+        data_root = self.paths_config.get('data_root')
+        archive_dir = os.path.join(data_root, 'log_archives')
+        
+        if not os.path.isdir(archive_dir):
+            return
+
+        if not check_internet_connection():
+            return
+
+        ftp = self._connect_ftp()
+        if not ftp:
+            return
+
+        try:
+            for filename in os.listdir(archive_dir):
+                if not filename.endswith(".txt"):
+                    continue
+                
+                local_path = os.path.join(archive_dir, filename)
+                if self._upload_archive_log(ftp, local_path):
+                    try:
+                        os.remove(local_path)
+                        log.info(f"Archivo de log archivado subido y eliminado localmente: {filename}")
+                    except OSError:
+                        pass
+        finally:
+            if ftp:
+                try:
+                    ftp.quit()
+                except ftplib.all_errors:
+                    pass
+
+    def _upload_archive_log(self, ftp, local_path: str) -> bool:
+        """Sube un archivo de log archivado a datos_doback/dobackXXX/logs/."""
+        try:
+            filename = os.path.basename(local_path)
+            device_name = self.session_manager.device_name.lower()
+            remote_log_dir = "logs"
+
+            # Navegar a datos_doback/dobackXXX/
+            if device_name not in ftp.nlst():
+                ftp.mkd(device_name)
+            ftp.cwd(device_name)
+
+            # Navegar a datos_doback/dobackXXX/logs/
+            if remote_log_dir not in ftp.nlst():
+                ftp.mkd(remote_log_dir)
+            ftp.cwd(remote_log_dir)
+
+            log.info(f"  -> Subiendo log archivado {filename} a {ftp.pwd()}...")
+            with open(local_path, 'rb') as f:
+                ftp.storbinary(f'STOR {filename}', f)
+
+            # Volver al directorio base para el siguiente archivo
+            ftp.cwd('/datos_doback')
+            return True
+        except ftplib.all_errors as e:
+            log.error(f"Error FTP al subir el log archivado {local_path}: {e}")
+            try:
+                ftp.cwd('/datos_doback')
+            except ftplib.all_errors: pass
+            return False
+        except Exception as e:
+            log.error(f"Error inesperado al subir el log archivado {local_path}: {e}")
+            return False
 
     def _connect_ftp(self):
         """Establece y devuelve una conexión FTP, o None si falla."""
