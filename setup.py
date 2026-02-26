@@ -161,7 +161,7 @@ def repo_step():
         print(">>> Actualizando repositorio")
         run(["git", "fetch", "--all", "--prune"], cwd=APP_DIR)
         run(["git", "reset", "--hard", f"origin/{GIT_BRANCH}"], cwd=APP_DIR)
-        run(["git", "clean", "-fdx"], cwd=APP_DIR)
+        run(["git", "clean", "-fd"], cwd=APP_DIR)
 
     # Crear config.yaml si no existe
     config_dir = APP_DIR / "config"
