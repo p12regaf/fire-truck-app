@@ -144,35 +144,36 @@ def repo_step():
     parent = APP_DIR.parent
     ensure_ssh_key_permissions()
 
+    # Asegurar permisos inmediatamente al entrar en repo_step
+    run(["sudo", "chown", "-R", f"{TARGET_USER}:{TARGET_USER}", str(APP_DIR)])
+
     # Verifica si .git/index existe y si parece corrupto
     git_index = APP_DIR / ".git" / "index"
     if git_index.exists():
         try:
             subprocess.run(["git", "status"], cwd=APP_DIR, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except subprocess.CalledProcessError:
-            print(">>> Índice de Git corrupto, limpiando archivos del repo (preservando local config)")
+            print(">>> Índice de Git corrupto, limpiando archivos del repo (preservando archivos críticos)")
             # Eliminar todo excepto lo que queremos mantener
             for item in APP_DIR.iterdir():
-                if item.name not in ('.venv', 'config', 'session_health.json'):
+                if item.name not in ('.venv', 'config', 'session_health.json', 'setup.py'):
                     run(["sudo", "rm", "-rf", str(item)])
 
     # Asegurarse de que el directorio APP_DIR exista
     APP_DIR.mkdir(parents=True, exist_ok=True)
 
     if not (APP_DIR / ".git").exists():
-        # Si hay archivos pero no hay .git, limpiar para poder clonar (sin borrar config)
+        # Si hay archivos pero no hay .git, limpiar para poder clonar (sin borrar config/setup)
         if any(APP_DIR.iterdir()):
-            print(">>> El directorio no es un repo git, limpiando para clonar (preservando local config)")
+            print(">>> El directorio no es un repo git, limpiando para clonar (preservando archivos críticos)")
             for item in APP_DIR.iterdir():
-                if item.name not in ('.venv', 'config', 'session_health.json'):
+                if item.name not in ('.venv', 'config', 'session_health.json', 'setup.py'):
                     run(["sudo", "rm", "-rf", str(item)])
         
         print(f">>> Clonando repo {REPO_URL}")
         run(["git", "clone", "-b", GIT_BRANCH, REPO_URL, str(APP_DIR)], cwd=parent)
     else:
         print(">>> Actualizando repositorio")
-        # Asegurar permisos antes de git para que el usuario cosigein pueda fetch/reset
-        run(["sudo", "chown", "-R", f"{TARGET_USER}:{TARGET_USER}", str(APP_DIR)])
         run(["git", "fetch", "--all", "--prune"], cwd=APP_DIR)
         run(["git", "reset", "--hard", f"origin/{GIT_BRANCH}"], cwd=APP_DIR)
         run(["git", "clean", "-fd"], cwd=APP_DIR)
