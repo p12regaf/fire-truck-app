@@ -291,7 +291,6 @@ def rollback_to_stable() -> bool:
         print(f"⚠ Error durante el rollback: {e}")
         return False
 def fixes():
-    return
     run(["stty", "-F", "/dev/serial1", "115200", "raw", "-echo"],ignore_errors=True)
 def main():
     print("\n=== INICIO DEL SETUP ===")
