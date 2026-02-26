@@ -6,85 +6,7 @@ import re
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
 
-class ArchivingRotatingFileHandler(RotatingFileHandler):
-    """
-    Handler que, al alcanzar el límite de archivos de rotación, 
-    combina todos los backups en un único archivo de log "archivado"
-    en lugar de borrar el más antiguo.
-    """
-    def __init__(self, filename, mode='a', maxBytes=0, backupCount=0, encoding=None, delay=False, archive_dir=None):
-        super().__init__(filename, mode, maxBytes, backupCount, encoding, delay)
-        self.archive_dir = archive_dir
-        if self.archive_dir:
-            os.makedirs(self.archive_dir, exist_ok=True)
-
-    def doRollover(self):
-        """
-        Realiza la rotación. Si se va a sobrepasar backupCount, combina los archivos.
-        """
-        if self.stream:
-            self.stream.close()
-            self.stream = None
-            
-        # Si el archivo más antiguo ya existe, es que vamos a rotar y perderlo.
-        # En ese caso, archivamos todos los actuales.
-        oldest_backup = self.rotation_filename(f"{self.baseFilename}.{self.backupCount}")
-        
-        if self.backupCount > 0 and os.path.exists(oldest_backup):
-            self._archive_logs()
-        
-        super().doRollover()
-        
-    def _archive_logs(self):
-        """Combina app.log.1...N y app.log en un solo archivo en archive_dir."""
-        try:
-            files_to_merge = []
-            # De más antiguo a más nuevo para orden cronológico
-            for i in range(self.backupCount, 0, -1):
-                f = self.rotation_filename(f"{self.baseFilename}.{i}")
-                if os.path.exists(f):
-                    files_to_merge.append(f)
-            
-            if os.path.exists(self.baseFilename):
-                files_to_merge.append(self.baseFilename)
-            
-            if not files_to_merge or not self.archive_dir:
-                return
-
-            # Obtener timestamp de la primera línea del archivo más antiguo para el nombre
-            archive_name = f"log_archive_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-            try:
-                with open(files_to_merge[0], 'r', encoding=self.encoding, errors='ignore') as f:
-                    first_line = f.readline()
-                    # Buscar patrones de fecha YYYY-MM-DD o DD/MM/YYYY
-                    match = re.search(r'(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})|(\d{2}/\d{2}/\d{4} \d{2}:\d{2}:\d{2})', first_line)
-                    if match:
-                        ts_str = match.group(0).replace(' ', '_').replace(':', '-').replace('/', '-')
-                        archive_name = f"log_{ts_str}"
-            except Exception:
-                pass
-
-            archive_path = os.path.join(self.archive_dir, f"{archive_name}.txt")
-            
-            # Combinar archivos
-            with open(archive_path, 'wb') as outfile:
-                for f_path in files_to_merge:
-                    with open(f_path, 'rb') as infile:
-                        shutil.copyfileobj(infile, outfile)
-                        outfile.write(b"\n--- ARCHIVE CHUNK DIVIDER ---\n")
-            
-            # Borrar los backups procesados (el actual se rotará normal por super.doRollover)
-            for f_path in files_to_merge[:-1]:
-                try:
-                    os.remove(f_path)
-                except OSError:
-                    pass
-                    
-            logging.getLogger().info(f"Logs archivados localmente para FTP: {archive_path}")
-
-        except Exception as e:
-            # Usamos print porque el logger podría estar en estado inestable durante el rollover
-            print(f"Error crítico archivando logs: {e}")
+# Eliminamos la clase ArchivingRotatingFileHandler ya que no se usará más la combinación de archivos.
 
 def setup_logging(config: dict):
     """Configura el sistema de logging para toda la aplicación."""
@@ -109,14 +31,20 @@ def setup_logging(config: dict):
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setFormatter(log_format)
 
-    # Handler personalizado para el archivo con rotación y archivado
-    file_handler = ArchivingRotatingFileHandler(
+    # Handler principal con rotación estándar (5MB, 15 archivos)
+    file_handler = RotatingFileHandler(
         log_file, 
         maxBytes=5*1024*1024, 
-        backupCount=15,
-        archive_dir=archive_dir
+        backupCount=15
     )
     file_handler.setFormatter(log_format)
+
+    # Handler para el LOG DIARIO (daily_YYYY-MM-DD.log)
+    # Este archivo se subirá en el setup.py si su fecha es anterior a hoy.
+    today_str = datetime.now().strftime('%Y-%m-%d')
+    daily_log_file = os.path.join(log_dir, f'daily_{today_str}.log')
+    daily_handler = logging.FileHandler(daily_log_file)
+    daily_handler.setFormatter(log_format)
 
     # Configurar el logger raíz
     root_logger = logging.getLogger()
@@ -124,5 +52,6 @@ def setup_logging(config: dict):
     root_logger.handlers.clear() # Limpiar handlers previos
     root_logger.addHandler(console_handler)
     root_logger.addHandler(file_handler)
+    root_logger.addHandler(daily_handler)
 
     logging.info(f"Logging configurado. Modo: Archivo + Local Archive. Nivel: {log_level_str}.")

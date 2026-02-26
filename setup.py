@@ -8,6 +8,10 @@ import time
 import json
 import shutil
 import tarfile
+import yaml
+import ftplib
+import socket
+import re
 
 TARGET_USER = "cosigein"
 APP_DIR = Path(f"/home/{TARGET_USER}/fire-truck-app")
@@ -342,6 +346,83 @@ def rollback_to_stable() -> bool:
     except Exception as e:
         print(f"⚠ Error durante el rollback: {e}")
         return False
+
+def upload_historical_logs():
+    """
+    Escanea el directorio de logs en busca de archivos daily_YYYY-MM-DD.log.
+    Sube todos los que no correspondan al día de hoy.
+    """
+    print("\n>>> Iniciando subida de logs históricos a FTP...")
+    config_file = APP_DIR / "config" / "config.yaml"
+    if not config_file.exists():
+        print("⚠ No se encontró config.yaml, saltando subida de logs.")
+        return
+
+    try:
+        with open(config_file, 'r') as f:
+            config = yaml.safe_load(f)
+    except Exception as e:
+        print(f"⚠ Error leyendo config.yaml: {e}")
+        return
+
+    ftp_cfg = config.get('ftp', {})
+    if not ftp_cfg.get('enabled', False):
+        print(">>> FTP deshabilitado en config.yaml.")
+        return
+
+    log_dir = Path(config.get('paths', {}).get('app_logs', str(LOG_DIR)))
+    if not log_dir.exists():
+        print(f">>> El directorio de logs {log_dir} no existe.")
+        return
+
+    # Preparar lista de archivos a subir
+    today_str = datetime.now().strftime('%Y-%m-%d')
+    files_to_upload = []
+    for f in log_dir.glob("daily_*.log"):
+        # Extraer fecha del nombre: daily_2026-02-26.log
+        match = re.search(r'daily_(\d{4}-\d{2}-\d{2})\.log', f.name)
+        if match:
+            file_date = match.group(1)
+            if file_date < today_str:
+                files_to_upload.append(f)
+
+    if not files_to_upload:
+        print(">>> No hay logs históricos para subir.")
+        return
+
+    # Intentar conexión FTP
+    print(f">>> Conectando a FTP {ftp_cfg.get('host')}...")
+    try:
+        ftp = ftplib.FTP()
+        ftp.connect(ftp_cfg['host'], ftp_cfg['port'], timeout=20)
+        ftp.login(ftp_cfg['user'], ftp_cfg['pass'])
+        
+        # Navegar a datos_doback/device_name/logs
+        # El nombre del dispositivo suele estar en config o se deduce
+        # Para setup.py, intentaremos obtenerlo de un archivo de estado o usar un default si no está en config
+        device_name = config.get('system', {}).get('device_name', 'unknown_device').lower()
+        
+        for base_dir in ["datos_doback", device_name, "logs"]:
+            try:
+                if base_dir not in ftp.nlst():
+                    ftp.mkd(base_dir)
+                ftp.cwd(base_dir)
+            except Exception:
+                # Si falla nlst o mkd, intentamos cwd directamente
+                ftp.cwd(base_dir)
+
+        for log_file in files_to_upload:
+            print(f"  -> Subiendo {log_file.name}...")
+            with open(log_file, 'rb') as f:
+                ftp.storbinary(f'STOR {log_file.name}', f)
+            log_file.unlink()
+            print(f"  ✔ {log_file.name} subido y eliminado.")
+
+        ftp.quit()
+        print(">>> Subida de logs históricos completada.")
+    except Exception as e:
+        print(f"⚠ Error durante la subida FTP: {e}")
+
 def fixes():
     run(["stty", "-F", "/dev/serial1", "115200", "raw", "-echo"],ignore_errors=True)
 def main():
@@ -368,6 +449,7 @@ def main():
     
     create_local_snapshot()
     fixes()
+    upload_historical_logs()
     print("\n✔ Setup completado correctamente (verbose)")
 
 if __name__ == "__main__":
