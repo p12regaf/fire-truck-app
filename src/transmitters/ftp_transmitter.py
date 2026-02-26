@@ -4,6 +4,7 @@ import os
 import threading
 import time
 import socket
+import re
 from datetime import datetime
 
 from src.utils.network import check_internet_connection
@@ -41,6 +42,7 @@ class FTPTransmitter(threading.Thread):
         
         # Ejecutar un ciclo de subida completo al arrancar
         log.info("Realizando ciclo de subida inicial completo (logs y tiempo real)...")
+        self._upload_historical_app_logs()
         self._perform_log_upload_cycle()
         self._perform_realtime_upload_cycle()
         log.info("Ciclo de subida inicial completado.")
@@ -69,6 +71,72 @@ class FTPTransmitter(threading.Thread):
         log.info("Transmisor FTP detenido.")
 
     # Se eliminaron los métodos _perform_archive_upload_cycle y _upload_archive_log
+
+    def _upload_historical_app_logs(self):
+        """
+        Escanea el directorio de logs en busca de archivos daily_YYYY-MM-DD.log de días anteriores.
+        """
+        log_dir_path = self.paths_config.get('app_logs')
+        if not log_dir_path or not os.path.exists(log_dir_path):
+            return
+
+        if not check_internet_connection():
+            return
+
+        # Preparar lista de archivos a subir
+        today_str = datetime.now().strftime('%Y-%m-%d')
+        files_to_upload = []
+        try:
+            for filename in os.listdir(log_dir_path):
+                match = re.search(r'daily_(\d{4}-\d{2}-\d{2})\.log', filename)
+                if match:
+                    file_date = match.group(1)
+                    if file_date < today_str:
+                        files_to_upload.append(os.path.join(log_dir_path, filename))
+        except Exception as e:
+            log.error(f"Error escaneando logs históricos: {e}")
+            return
+
+        if not files_to_upload:
+            return
+
+        log.info(f"Detectados {len(files_to_upload)} archivos de log históricos para subir.")
+
+        ftp = self._connect_ftp()
+        if not ftp:
+            return
+
+        try:
+            device_name = self.session_manager.device_name.lower()
+            remote_log_dir = "logs"
+
+            for log_path in files_to_upload:
+                filename = os.path.basename(log_path)
+                
+                # Navegar a datos_doback/device_name/logs
+                try:
+                    ftp.cwd('/datos_doback')
+                    if device_name not in ftp.nlst():
+                        ftp.mkd(device_name)
+                    ftp.cwd(device_name)
+                    if remote_log_dir not in ftp.nlst():
+                        ftp.mkd(remote_log_dir)
+                    ftp.cwd(remote_log_dir)
+
+                    log.info(f"  -> Subiendo log histórico {filename}...")
+                    with open(log_path, 'rb') as f:
+                        ftp.storbinary(f'STOR {filename}', f)
+                    
+                    os.remove(log_path)
+                    log.info(f"  ✔ {filename} subido y eliminado.")
+                except Exception as e:
+                    log.error(f"Error subiendo log histórico {filename}: {e}")
+        finally:
+            if ftp:
+                try:
+                    ftp.quit()
+                except:
+                    pass
 
     def _connect_ftp(self):
         """Establece y devuelve una conexión FTP, o None si falla."""
