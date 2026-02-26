@@ -83,10 +83,18 @@ def restore_local_snapshot():
         return False
 
 def ensure_dirs():
-    res = run(["mkdir", "-p", str(APP_DIR), str(LOG_DIR), str(DATA_DIR), str(VERSIONS_DIR)], sudo=True)
+    # Solo creamos los directorios si no existen.
+    dirs_to_ensure = [str(APP_DIR), str(LOG_DIR), str(DATA_DIR), str(VERSIONS_DIR)]
+    res = run(["sudo", "mkdir", "-p"] + dirs_to_ensure)
+    
     if res == 0:
-        # Asegurar que todas las rutas pertenecen al usuario cosigein para evitar problemas de permisos de Git
-        run(["sudo", "chown", "-R", f"{TARGET_USER}:{TARGET_USER}", f"/home/{TARGET_USER}"])
+        # Optimización: En lugar de chown -R /home/cosigein (lento), 
+        # solo aseguramos permisos en las rutas críticas del sistema.
+        print(">>> Asegurando permisos en directorios críticos...")
+        run(["sudo", "chown", "-R", f"{TARGET_USER}:{TARGET_USER}", str(APP_DIR)])
+        run(["sudo", "chown", "-R", f"{TARGET_USER}:{TARGET_USER}", str(LOG_DIR)])
+        run(["sudo", "chown", "-R", f"{TARGET_USER}:{TARGET_USER}", str(DATA_DIR)])
+        run(["sudo", "chown", "-R", f"{TARGET_USER}:{TARGET_USER}", str(VERSIONS_DIR)])
     return res
 
 def fix_dns():
@@ -147,6 +155,9 @@ def repo_step():
     # Asegurar permisos inmediatamente al entrar en repo_step
     run(["sudo", "chown", "-R", f"{TARGET_USER}:{TARGET_USER}", str(APP_DIR)])
 
+    # Solo esperamos la red si realmente vamos a intentar interactuar con GitHub
+    wait_for_network()
+
     # Verifica si .git/index existe y si parece corrupto
     git_index = APP_DIR / ".git" / "index"
     if git_index.exists():
@@ -191,8 +202,24 @@ def repo_step():
             print("⚠ No existe config.yaml ni template")
 
 def venv_step():
-    run(["python3", "-m", "venv", ".venv"], cwd=APP_DIR)
-    run([str(APP_DIR / ".venv/bin/pip"), "install", "-r", "requirements.txt"], cwd=APP_DIR)
+    venv_dir = APP_DIR / ".venv"
+    req_file = APP_DIR / "requirements.txt"
+    timestamp_file = venv_dir / ".last_install"
+    
+    # Si no existe .venv, lo creamos
+    if not venv_dir.exists():
+        run(["python3", "-m", "venv", ".venv"], cwd=APP_DIR)
+    
+    # Solo corremos pip si requirements.txt es más nuevo que nuestro último timestamp
+    needs_install = True
+    if timestamp_file.exists() and req_file.exists():
+        if timestamp_file.stat().st_mtime > req_file.stat().st_mtime:
+            needs_install = False
+            print(">>> Requerimientos al día, saltando pip install.")
+
+    if needs_install:
+        run([str(venv_dir / "bin/pip"), "install", "-r", "requirements.txt"], cwd=APP_DIR)
+        timestamp_file.touch()
 
 def install_services():
     print("\n>>> Instalando servicios systemd")
@@ -311,8 +338,9 @@ def main():
     print("\n=== INICIO DEL SETUP ===")
     if ensure_dirs() != 0:
         sys.exit(1)
-    fix_dns()
-    wait_for_network()
+    
+    # Quitamos fix_dns y wait_for_network del flujo principal bloqueante.
+    # Se ejecutarán solo cuando sea necesario dentro de repo_step.
     
     # Comprobar salud de la sesión anterior y realizar rollback si es necesario
     skip_repo = check_session_health()

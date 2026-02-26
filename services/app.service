@@ -1,7 +1,7 @@
 [Unit]
 Description=fire-truck-app principal
-After=updater.service
-Wants=updater.service
+# Arrancamos lo antes posible, el updater corre en paralelo.
+After=basic.target
 
 
 
