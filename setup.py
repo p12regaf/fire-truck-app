@@ -8,9 +8,6 @@ import time
 import json
 import shutil
 import tarfile
-import json
-import tarfile
-import shutil
 
 TARGET_USER = "cosigein"
 APP_DIR = Path(f"/home/{TARGET_USER}/fire-truck-app")
@@ -23,7 +20,7 @@ SERVICES = ["updater.service", "app.service"]
 UPDATE_STATE_FILE = Path(f"/home/{TARGET_USER}/update_state.json")
 BACKUP_FILE = Path(f"/home/{TARGET_USER}/fire-truck-app_stable_backup.tar.gz")
 
-REPO_URL = "https://github.com/p12regaf/fire-truck-app.git"
+REPO_URL = "git@github.com:p12regaf/fire-truck-app.git"
 GIT_BRANCH = "Net-Security"
 
 def run(cmd, sudo=False, cwd=None, ignore_errors=False):
@@ -86,7 +83,7 @@ def restore_local_snapshot():
         return False
 
 def ensure_dirs():
-    return run(["mkdir", "-p", str(APP_DIR), str(LOG_DIR), str(DATA_DIR)], sudo=True)
+    run(["mkdir", "-p", str(APP_DIR), str(LOG_DIR), str(DATA_DIR)], sudo=True)
 
 def fix_dns():
     print(">>> Configurando DNS permanente...")
@@ -103,7 +100,7 @@ def wait_for_network():
     for i in range(10):
         result = subprocess.run(["getent", "hosts", "github.com"], stdout=subprocess.DEVNULL)
         if result.returncode == 0:
-            print(f">>> Red OK (detectada en intento {i+1})")
+            print(f">>> Red OK (detectada en {i+1}s)")
             return
         time.sleep(3)
     print("ERROR: sin DNS / Internet")
@@ -141,6 +138,7 @@ def save_update_state(state):
 def repo_step():
     print("\n>>> Paso de repositorio (Git)")
     parent = APP_DIR.parent
+    ensure_ssh_key_permissions()
 
     # Verifica si .git/index existe y si parece corrupto
     git_index = APP_DIR / ".git" / "index"
@@ -148,24 +146,32 @@ def repo_step():
         try:
             subprocess.run(["git", "status"], cwd=APP_DIR, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except subprocess.CalledProcessError:
-            print(">>> Índice de Git corrupto, eliminando carpeta completa del repo")
-            run(["rm", "-rf", str(APP_DIR)], sudo=True)
+            print(">>> Índice de Git corrupto, limpiando archivos del repo (preservando archivos críticos)")
+            # Eliminar todo excepto lo que queremos mantener
+            for item in APP_DIR.iterdir():
+                if item.name not in ('.venv', 'config', 'session_health.json', 'setup.py'):
+                    run(["sudo", "rm", "-rf", str(item)])
 
     # Asegurarse de que el directorio APP_DIR exista
     APP_DIR.mkdir(parents=True, exist_ok=True)
 
     if not (APP_DIR / ".git").exists():
+        # Si hay archivos pero no hay .git, limpiar para poder clonar (sin borrar config/setup)
         if any(APP_DIR.iterdir()):
-            run(["rm", "-rf", str(APP_DIR)], sudo=True)
-        print(f">>> Clonando repo {REPO_URL}")
-        run(["git", "clone", "-b", GIT_BRANCH, REPO_URL, str(APP_DIR)], cwd=parent)
-    else:
-        print(">>> Actualizando repositorio")
-        run(["git", "fetch", "--all", "--prune"], cwd=APP_DIR)
-        run(["git", "reset", "--hard", f"origin/{GIT_BRANCH}"], cwd=APP_DIR)
-        run(["git", "clean", "-fdx"], cwd=APP_DIR)
-    # Asegurarse de que el directorio APP_DIR exista
-    APP_DIR.mkdir(parents=True, exist_ok=True)
+            print(">>> El directorio no es un repo git, limpiando para clonar (preservando archivos críticos)")
+            for item in APP_DIR.iterdir():
+                if item.name not in ('.venv', 'config', 'session_health.json', 'setup.py'):
+                    run(["sudo", "rm", "-rf", str(item)])
+        
+        print(f">>> Inicializando y vinculando repo {REPO_URL}")
+        if run(["git", "init"], cwd=APP_DIR) != 0: return 1
+        if run(["git", "remote", "add", "origin", REPO_URL], cwd=APP_DIR) != 0: return 1
+    
+    print(">>> Actualizando repositorio")
+    if run(["git", "fetch", "--all", "--prune"], cwd=APP_DIR) != 0: return 1
+    if run(["git", "reset", "--hard", f"origin/{GIT_BRANCH}"], cwd=APP_DIR) != 0: return 1
+    if run(["git", "clean", "-fd"], cwd=APP_DIR) != 0: return 1
+    return 0
 
     # Crear config.yaml si no existe
     config_dir = APP_DIR / "config"
@@ -180,8 +186,32 @@ def repo_step():
             print("⚠ No existe config.yaml ni template")
 
 def venv_step():
-    run(["python3", "-m", "venv", ".venv"], cwd=APP_DIR)
-    run([str(APP_DIR / ".venv/bin/pip"), "install", "-r", "requirements.txt"], cwd=APP_DIR)
+    venv_dir = APP_DIR / ".venv"
+    req_file = APP_DIR / "requirements.txt"
+    timestamp_file = venv_dir / ".last_install"
+    pip_bin = venv_dir / "bin/pip"
+    python_bin = venv_dir / "bin/python3"
+    
+    # Si no existe .venv o falta el binario de python, lo creamos de cero
+    if not venv_dir.exists() or not python_bin.exists():
+        print(">>> Creando entorno virtual...")
+        if venv_dir.exists():
+            run(["sudo", "rm", "-rf", str(venv_dir)])
+        if run(["python3", "-m", "venv", ".venv"], cwd=APP_DIR) != 0: return 1
+    
+    # Solo corremos pip si requirements.txt es más nuevo que nuestro último timestamp
+    needs_install = True
+    if timestamp_file.exists() and req_file.exists() and pip_bin.exists():
+        if timestamp_file.stat().st_mtime > req_file.stat().st_mtime:
+            needs_install = False
+            print(">>> Requerimientos al día, saltando pip install.")
+
+    if needs_install:
+        print(">>> Instalando requerimientos con pip...")
+        if run([str(pip_bin), "install", "-r", "requirements.txt"], cwd=APP_DIR) != 0:
+            return 1
+        timestamp_file.touch()
+    return 0
 
 def install_services():
     print("\n>>> Instalando servicios systemd")
@@ -295,15 +325,29 @@ def rollback_to_stable() -> bool:
         print(f"⚠ Error durante el rollback: {e}")
         return False
 
+def fixes():
+    run(["stty", "-F", "/dev/serial1", "115200", "raw", "-echo"],ignore_errors=True)
 def main():
-    print("\n=== INICIO DEL SETUP VERBOSE ===")
-    if ensure_dirs() != 0: sys.exit(1)
-    fix_dns()
-    wait_for_network()
-    repo_step()
+    print("\n=== INICIO DEL SETUP ===")
+    if ensure_dirs() != 0:
+        sys.exit(1)
+    
+    # Quitamos fix_dns y wait_for_network del flujo principal bloqueante.
+    # Se ejecutarán solo cuando sea necesario dentro de repo_step.
+    
+    # Comprobar salud de la sesión anterior y realizar rollback si es necesario
+    skip_repo = check_session_health()
+    
+    if not skip_repo:
+        archive_current_version()
+        if repo_step() != 0:
+            print("⚠ Error crítico en repo_step. Abortando setup.")
+            sys.exit(1)
+    
     install_services()
     venv_step()
-    create_local_snapshot()
+    if network_ok:
+        create_local_snapshot()
     print("\n✔ Setup completado correctamente (verbose)")
 
 if __name__ == "__main__":
