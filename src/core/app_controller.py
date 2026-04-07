@@ -232,7 +232,13 @@ class AppController:
     def start(self):
         """Inicia todos los hilos de trabajo y el procesador de datos."""
         log.info("Iniciando todos los servicios del controlador...")
-        
+
+        self.self_test_passed = self._perform_self_test()
+        if not self.self_test_passed:
+            log.critical("Self-Test FALLIDO. El RebootMonitor no establecerá el pin en ALTO.")
+        else:
+            log.info("Self-Test superado correctamente.")
+
         self._check_initial_connectivity()
         self._write_session_headers()
         
