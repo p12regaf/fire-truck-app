@@ -93,7 +93,7 @@ data_sources:
 
   estabilometro:
     enabled: true
-    serial_port: "/dev/serial0"
+    serial_port: "/dev/ttyAMA0"
     baud_rate: 115200
     session_timeout_sec: 15
 

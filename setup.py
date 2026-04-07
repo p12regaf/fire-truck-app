@@ -23,7 +23,7 @@ SERVICES = ["updater.service", "app.service"]
 UPDATE_STATE_FILE = Path(f"/home/{TARGET_USER}/update_state.json")
 BACKUP_FILE = Path(f"/home/{TARGET_USER}/fire-truck-app_stable_backup.tar.gz")
 
-REPO_URL = "git@github.com:p12regaf/fire-truck-app.git"
+REPO_URL = "https://github.com/p12regaf/fire-truck-app.git"
 GIT_BRANCH = "Net-Security"
 
 def run(cmd, sudo=False, cwd=None, ignore_errors=False):
@@ -86,7 +86,7 @@ def restore_local_snapshot():
         return False
 
 def ensure_dirs():
-    run(["mkdir", "-p", str(APP_DIR), str(LOG_DIR), str(DATA_DIR)], sudo=True)
+    return run(["mkdir", "-p", str(APP_DIR), str(LOG_DIR), str(DATA_DIR)], sudo=True)
 
 def fix_dns():
     print(">>> Configurando DNS permanente...")
@@ -100,10 +100,10 @@ FallbackDNS=9.9.9.9
 
 def wait_for_network():
     print(">>> Esperando red (DNS)...")
-    for _ in range(10):
+    for i in range(10):
         result = subprocess.run(["getent", "hosts", "github.com"], stdout=subprocess.DEVNULL)
         if result.returncode == 0:
-            print(f">>> Red OK (detectada en {i+1}s)")
+            print(f">>> Red OK (detectada en intento {i+1})")
             return
         time.sleep(3)
     print("ERROR: sin DNS / Internet")
@@ -141,7 +141,6 @@ def save_update_state(state):
 def repo_step():
     print("\n>>> Paso de repositorio (Git)")
     parent = APP_DIR.parent
-    ensure_ssh_key_permissions()
 
     # Verifica si .git/index existe y si parece corrupto
     git_index = APP_DIR / ".git" / "index"
@@ -304,8 +303,7 @@ def main():
     repo_step()
     install_services()
     venv_step()
-    if network_ok:
-        create_local_snapshot()
+    create_local_snapshot()
     print("\n✔ Setup completado correctamente (verbose)")
 
 if __name__ == "__main__":
