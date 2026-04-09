@@ -12,11 +12,20 @@ class GPSAcquirer(BaseAcquirer):
         super().__init__(config, data_queue, shutdown_event, name="GPSAcquirer", config_key="gps")
         self.bus = None
         self.i2c_addr = self.config.get('i2c_addr', 0x42)
-        
+
         self._buffer = bytearray()
         self._last_speed_kmh: Optional[str] = None
         self._last_date_str: Optional[str] = None
         self.MAX_BUFFER_SIZE = 4096
+
+        # Geo-fence configurable (defaults: España + Canarias)
+        geo = self.config.get('geo_fence', {})
+        self.geo_fence_enabled = geo.get('enabled', True)
+        self.lat_min = geo.get('lat_min', 35.0)
+        self.lat_max = geo.get('lat_max', 45.0)
+        self.lon_min = geo.get('lon_min', -19.0)
+        self.lon_max = geo.get('lon_max', 5.0)
+        self.max_speed_kmh = self.config.get('max_valid_speed_kmh', 250.0)
 
     def _setup(self) -> bool:
         try:
@@ -157,13 +166,12 @@ class GPSAcquirer(BaseAcquirer):
                     velocidad_kmh = None
 
                 if velocidad_kmh is not None:
-                    # ! Comprobar rango razonable para evitar errores
-                    if 0.0 <= velocidad_kmh <= 120.0:
+                    if 0.0 <= velocidad_kmh <= self.max_speed_kmh:
                         self._last_speed_kmh = f"{velocidad_kmh:.2f}"
                     else:
                         log.warning(
-                            f"Velocidad GPS fuera de rango razonable: "
-                            f"{velocidad_kmh:.2f} km/h. Trama RMC descartada para velocidad."
+                            f"Velocidad GPS fuera de rango válido: "
+                            f"{velocidad_kmh:.2f} km/h (max: {self.max_speed_kmh}). Descartada."
                         )
 
             # Extraer fecha con validación
@@ -261,26 +269,21 @@ class GPSAcquirer(BaseAcquirer):
             lat_direction = campos[3]
             lon_direction = campos[5]
 
-            if lat_direction != 'N':
-                log.warning(f"Latitud inválida para España (dirección '{lat_direction}', se esperaba 'N'). Descartando trama.")
-                return None
-
             lat_decimal = self._convert_lat_lon(campos[2], lat_direction)
             lon_decimal = self._convert_lat_lon(campos[4], lon_direction)
 
             if lat_decimal is None or lon_decimal is None:
                 log.warning("Coordenadas inválidas recibidas en trama GNGGA. Descartando.")
                 return None
-            
-            # Latitud: ~36° a ~44°
-            if not (35.0 < lat_decimal < 45.0):
-                log.warning(f"Latitud ({lat_decimal}) fuera del rango esperado para España. Descartando trama.")
-                return None
-            
-            # Longitud: ~-18° (Canarias) a ~4° (Baleares)
-            if not (-19.0 < lon_decimal < 5.0):
-                log.warning(f"Longitud ({lon_decimal}) fuera del rango esperado para España. Descartando trama.")
-                return None
+
+            # Geo-fence configurable
+            if self.geo_fence_enabled:
+                if not (self.lat_min < lat_decimal < self.lat_max):
+                    log.warning(f"Latitud ({lat_decimal}) fuera del geo-fence [{self.lat_min}, {self.lat_max}]. Descartando.")
+                    return None
+                if not (self.lon_min < lon_decimal < self.lon_max):
+                    log.warning(f"Longitud ({lon_decimal}) fuera del geo-fence [{self.lon_min}, {self.lon_max}]. Descartando.")
+                    return None
             
             # Hora GPS validada
             gps_time_str = ""

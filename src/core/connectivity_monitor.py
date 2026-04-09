@@ -16,11 +16,10 @@ class ConnectivityMonitor(threading.Thread):
         self.app_controller = app_controller
         self.shutdown_event = app_controller.shutdown_event
         
-        # Pull log path from config if available, fallback to default
         self.log_dir = Path(config.get('paths', {}).get('app_logs', '/home/cosigein/logs'))
         self.connectivity_log = self.log_dir / "connectivity.log"
-        self.host_to_ping = "8.8.8.8"
-        self.check_interval = 1.0 # seconds
+        self.host_to_ping = config.get('system', {}).get('connectivity_host', '8.8.8.8')
+        self.check_interval = config.get('system', {}).get('connectivity_check_sec', 30.0)
         self.connectivity_seen = False
 
     def run(self):

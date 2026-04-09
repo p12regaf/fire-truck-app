@@ -2,7 +2,10 @@ import logging
 import subprocess
 import threading
 import time
-import RPi.GPIO as GPIO 
+try:
+    import RPi.GPIO as GPIO
+except (ImportError, RuntimeError):
+    GPIO = None
 import os
 import json
 
