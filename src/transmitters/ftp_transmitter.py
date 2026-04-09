@@ -139,19 +139,20 @@ class FTPTransmitter(threading.Thread):
                     pass
 
     def _connect_ftp(self):
-        """Establece y devuelve una conexión FTP, o None si falla."""
+        """Establece y devuelve una conexión FTPS (TLS), o None si falla."""
         try:
-            ftp = ftplib.FTP()
+            ftp = ftplib.FTP_TLS()
             ftp.connect(self.ftp_config['host'], self.ftp_config['port'], timeout=20)
             ftp.login(self.ftp_config['user'], self.ftp_config['pass'])
+            ftp.prot_p()  # Proteger canal de datos con TLS
             base_remote_dir = "datos_doback"
             if base_remote_dir not in ftp.nlst():
                 ftp.mkd(base_remote_dir)
             ftp.cwd(base_remote_dir)
-            log.debug("Conexión FTP establecida y en directorio 'datos_doback'.")
+            log.debug("Conexión FTPS (TLS) establecida y en directorio 'datos_doback'.")
             return ftp
         except ftplib.all_errors as e:
-            log.error(f"Error de conexión FTP: {e}")
+            log.error(f"Error de conexión FTPS: {e}")
             return None
 
     def _scan_and_upload(self, file_filter: callable):

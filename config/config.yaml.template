@@ -45,10 +45,10 @@ paths:
 
 ftp:
   enabled: true
-  host: "***REMOVED***"
+  host: "CHANGE_ME_FTP_HOST"
   port: 21
-  user: "doback"
-  pass: "***REMOVED***"
+  user: "CHANGE_ME_FTP_USER"
+  pass: "CHANGE_ME_FTP_PASS"
   # Intervalo para buscar y subir archivos de log completos de días anteriores.
   log_upload_interval_sec: 300
   # Intervalo para subir los archivos de estado en tiempo real.

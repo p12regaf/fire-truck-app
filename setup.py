@@ -83,7 +83,7 @@ def restore_local_snapshot():
         return False
 
 def ensure_dirs():
-    run(["mkdir", "-p", str(APP_DIR), str(LOG_DIR), str(DATA_DIR)], sudo=True)
+    return run(["mkdir", "-p", str(APP_DIR), str(LOG_DIR), str(DATA_DIR)], sudo=True)
 
 def fix_dns():
     print(">>> Configurando DNS permanente...")
@@ -171,7 +171,6 @@ def repo_step():
     if run(["git", "fetch", "--all", "--prune"], cwd=APP_DIR) != 0: return 1
     if run(["git", "reset", "--hard", f"origin/{GIT_BRANCH}"], cwd=APP_DIR) != 0: return 1
     if run(["git", "clean", "-fd"], cwd=APP_DIR) != 0: return 1
-    return 0
 
     # Crear config.yaml si no existe
     config_dir = APP_DIR / "config"
@@ -184,6 +183,8 @@ def repo_step():
             run(["cp", str(config_template), str(config_file)])
         else:
             print("⚠ No existe config.yaml ni template")
+
+    return 0
 
 def venv_step():
     venv_dir = APP_DIR / ".venv"
@@ -331,19 +332,18 @@ def main():
     print("\n=== INICIO DEL SETUP ===")
     if ensure_dirs() != 0:
         sys.exit(1)
-    
-    # Quitamos fix_dns y wait_for_network del flujo principal bloqueante.
-    # Se ejecutarán solo cuando sea necesario dentro de repo_step.
-    
+
     # Comprobar salud de la sesión anterior y realizar rollback si es necesario
     skip_repo = check_session_health()
-    
+
+    network_ok = False
     if not skip_repo:
         archive_current_version()
         if repo_step() != 0:
             print("⚠ Error crítico en repo_step. Abortando setup.")
             sys.exit(1)
-    
+        network_ok = True  # repo_step succeeded → git fetch worked → network available
+
     install_services()
     venv_step()
     if network_ok:
