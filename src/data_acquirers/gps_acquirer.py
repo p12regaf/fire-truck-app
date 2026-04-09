@@ -125,9 +125,14 @@ class GPSAcquirer(BaseAcquirer):
     def _format_gps_date(self, ddmmyy: str) -> Optional[str]:
         """
         Recibe ddmmyy y devuelve 'dd/mm/yyyy' o None si es inválida.
+        Valida rangos para filtrar tramas NMEA corruptas durante arranque frío.
         """
         if not ddmmyy or len(ddmmyy) != 6 or not ddmmyy.isdigit():
             log.warning(f"Fecha GPS con formato inválido: {ddmmyy}")
+            return None
+        dd, mm, yy = int(ddmmyy[0:2]), int(ddmmyy[2:4]), int(ddmmyy[4:6])
+        if not (1 <= dd <= 31 and 1 <= mm <= 12 and 0 <= yy <= 99):
+            log.warning(f"Fecha GPS fuera de rango: dd={dd} mm={mm} yy={yy} (trama corrupta)")
             return None
         return f"{ddmmyy[0:2]}/{ddmmyy[2:4]}/20{ddmmyy[4:6]}"
 
