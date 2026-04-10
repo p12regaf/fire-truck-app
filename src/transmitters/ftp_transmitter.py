@@ -115,7 +115,7 @@ class FTPTransmitter(threading.Thread):
                 
                 # Navegar a datos_doback/device_name/logs
                 try:
-                    ftp.cwd('/datos_doback')
+                    ftp.cwd('/'); ftp.cwd('datos_doback')
                     if device_name not in ftp.nlst():
                         ftp.mkd(device_name)
                     ftp.cwd(device_name)
@@ -248,13 +248,13 @@ class FTPTransmitter(threading.Thread):
                 ftp.storbinary(f'STOR {filename}', f)
             
             # Volver al directorio base 'datos_doback' para el siguiente archivo
-            ftp.cwd('/datos_doback')
+            ftp.cwd('/'); ftp.cwd('datos_doback')
             return True
             
         except ftplib.all_errors as e:
             log.error(f"Error de FTP al subir el archivo {local_path}: {e}")
             try:
-                ftp.cwd('/datos_doback')
+                ftp.cwd('/'); ftp.cwd('datos_doback')
             except ftplib.all_errors:
                 log.error("No se pudo volver al directorio FTP base después de un error.")
             return False
@@ -331,11 +331,11 @@ class FTPTransmitter(threading.Thread):
                 ftp.storbinary(f'STOR {filename}', f)
 
             # Volver al directorio base para el siguiente archivo
-            ftp.cwd('/datos_doback')
+            ftp.cwd('/'); ftp.cwd('datos_doback')
         except ftplib.all_errors as e:
             log.error(f"Error FTP al subir el log de sistema {local_path}: {e}")
             try:
-                ftp.cwd('/datos_doback')
+                ftp.cwd('/'); ftp.cwd('datos_doback')
             except ftplib.all_errors: pass
         except Exception as e:
             log.error(f"Error inesperado al subir el log de sistema {local_path}: {e}")
