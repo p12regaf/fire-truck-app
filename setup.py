@@ -21,7 +21,7 @@ UPDATE_STATE_FILE = Path(f"/home/{TARGET_USER}/update_state.json")
 BACKUP_FILE = Path(f"/home/{TARGET_USER}/fire-truck-app_stable_backup.tar.gz")
 
 REPO_URL = "git@github.com:p12regaf/fire-truck-app.git"
-GIT_BRANCH = "Net-Security"
+GIT_BRANCH = "main"
 
 def run(cmd, sudo=False, cwd=None, ignore_errors=False):
     if sudo:
