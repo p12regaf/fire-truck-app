@@ -28,6 +28,14 @@ def main():
 
     target = f"{REMOTE_USER}@{host}"
 
+    print(f"\n  Destino: {target}")
+    print(f"  Directorio remoto: {REMOTE_APP_DIR}")
+    print(f"  Script a ejecutar: {REMOTE_SCRIPT}")
+    confirm = input("\n  ¿Continuar con el despliegue? (y/N): ").strip()
+    if confirm.lower() != 'y':
+        print("Despliegue cancelado.")
+        sys.exit(0)
+
     # Usar SSH ControlMaster para pedir la contraseña una sola vez
     ctrl_socket = os.path.join(tempfile.gettempdir(), f"ssh-deploy-{host}")
     ssh_opts = ["-o", f"ControlPath={ctrl_socket}", "-o", "ControlMaster=auto", "-o", "ControlPersist=60"]

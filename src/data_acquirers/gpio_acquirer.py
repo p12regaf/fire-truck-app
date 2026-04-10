@@ -2,7 +2,10 @@
 
 import logging
 from datetime import datetime
-import RPi.GPIO as GPIO # Importación directa.
+try:
+    import RPi.GPIO as GPIO
+except (ImportError, RuntimeError):
+    GPIO = None
 
 from .base_acquirer import BaseAcquirer
 

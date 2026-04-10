@@ -6,7 +6,11 @@ import time
 from datetime import datetime
 import os
 import ftplib
-import RPi.GPIO as GPIO
+
+try:
+    import RPi.GPIO as GPIO
+except (ImportError, RuntimeError):
+    GPIO = None
 
 from .session_manager import SessionManager
 from src.data_acquirers.can_acquirer import CANAcquirer
@@ -122,10 +126,10 @@ class AppController:
         log.info(f"{len(self.workers)} trabajadores inicializados.")
         log.info(f"Tipos de datos activos: {self.active_data_types}")
 
-        if not self.simulate:
+        if not self.simulate and GPIO is not None:
             self._setup_gpio_pins()
         else:
-            log.info("Modo SIMULACIÓN: Saltando configuración física de GPIO.")
+            log.info("Modo SIMULACIÓN o sin GPIO: Saltando configuración física de GPIO.")
         
         # Crear los directorios de datos necesarios (ej. /datos/CAN, /datos/GPS)
         self.session_manager.ensure_data_directories(self.active_data_types)
@@ -209,6 +213,20 @@ class AppController:
         else:
             log.warning("No se detectó conexión a internet en la comprobación inicial.")
 
+    def _watchdog_loop(self):
+        """Monitoriza hilos de trabajo y alerta si alguno muere."""
+        watchdog_interval = self.config.get('system', {}).get('watchdog_interval_sec', 15)
+        log.info(f"Watchdog activo. Chequeando hilos cada {watchdog_interval}s.")
+        while not self.shutdown_event.is_set():
+            self.shutdown_event.wait(watchdog_interval)
+            if self.shutdown_event.is_set():
+                break
+            for worker in self.workers:
+                if not worker.is_alive() and not self.shutdown_event.is_set():
+                    log.critical(f"WATCHDOG: Hilo '{worker.name}' ha muerto inesperadamente.")
+            if not self.processor_thread.is_alive() and not self.shutdown_event.is_set():
+                log.critical("WATCHDOG: Hilo 'DataProcessor' ha muerto inesperadamente.")
+
     def _write_session_health(self):
         """Escribe el estado de conectividad de la sesión para que setup.py lo lea en el próximo arranque."""
         try:
@@ -241,11 +259,19 @@ class AppController:
 
         self._check_initial_connectivity()
         self._write_session_headers()
-        
+
         self.processor_thread.start()
         for worker in self.workers:
             worker.start()
-        log.info("Todos los servicios del controlador han sido iniciados.")
+
+        # Watchdog thread — detecta hilos muertos y alerta
+        self.watchdog_thread = threading.Thread(
+            target=self._watchdog_loop,
+            name="Watchdog",
+            daemon=True
+        )
+        self.watchdog_thread.start()
+        log.info("Todos los servicios del controlador han sido iniciados (watchdog activo).")
 
     def _perform_self_test(self) -> bool:
         """
